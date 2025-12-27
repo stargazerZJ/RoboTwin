@@ -145,25 +145,36 @@ def has_effort(hdf5_files: list[Path]) -> bool:
 
 
 def load_raw_images_per_camera(ep: h5py.File, cameras: list[str]) -> dict[str, np.ndarray]:
-    imgs_per_cam = {}
+    """
+    Fast path for Pi0 processed datasets:
+    - Images are stored as JPEG bytes per frame (1D dataset of variable-length bytes).
+    - Decode with OpenCV in parallel across frames to utilize many CPU cores.
+    """
+    import cv2
+    from concurrent.futures import ThreadPoolExecutor
+
+    imgs_per_cam: dict[str, np.ndarray] = {}
+
+    def _decode_one(jpeg_bytes: bytes) -> np.ndarray:
+        arr = np.frombuffer(jpeg_bytes, np.uint8)
+        return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+    # Use a large thread pool; OpenCV decode releases the GIL and scales well.
+    max_workers = min(64, (os.cpu_count() or 1))
     for camera in cameras:
-        uncompressed = ep[f"/observations/images/{camera}"].ndim == 4
+        ds = ep[f"/observations/images/{camera}"]
+        uncompressed = ds.ndim == 4
 
         if uncompressed:
-            # load all images in RAM
-            imgs_array = ep[f"/observations/images/{camera}"][:]
+            imgs_array = ds[:]
         else:
-            import cv2
-
-            # load one compressed image after the other in RAM and uncompress
-            imgs_array = []
-            for data in ep[f"/observations/images/{camera}"]:
-                data = np.frombuffer(data, np.uint8)
-                # img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)  # 解码为彩色图像
-                imgs_array.append(cv2.imdecode(data, cv2.IMREAD_COLOR))
-            imgs_array = np.array(imgs_array)
+            # Read all bytes first (HDF5 I/O), then decode in parallel.
+            jpeg_list = list(ds[:])
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                imgs_array = np.array(list(ex.map(_decode_one, jpeg_list)))
 
         imgs_per_cam[camera] = imgs_array
+
     return imgs_per_cam
 
 
@@ -266,6 +277,8 @@ def port_aloha(
         for filename in fnmatch.filter(files, '*.hdf5'):
             file_path = os.path.join(root, filename)
             hdf5_files.append(file_path)
+    # Deterministic order (and avoids random filesystem traversal order)
+    hdf5_files = sorted(hdf5_files)
 
     dataset = create_empty_dataset(
         repo_id,
