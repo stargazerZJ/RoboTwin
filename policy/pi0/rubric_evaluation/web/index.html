@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pi0 Rubric Evaluation</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="title">Pi0 Rubric Evaluation</div>
+      <div class="statusline" id="statusline">Loading…</div>
+      <div class="actions">
+        <button id="btnReload" title="Reload rubric (r)">Reload rubric</button>
+        <button id="btnVersions" title="Toggle versions panel (v)">Versions</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="left">
+        <div class="panel">
+          <div class="panel-title">Latest episodes</div>
+          <div class="episode-list" id="episodeList"></div>
+        </div>
+      </section>
+
+      <section class="right">
+        <div class="panel video-panel">
+          <div class="panel-title">
+            <span id="videoTitle">Video</span>
+            <span class="spacer"></span>
+            <span class="hint">Shortcuts: j/k seek, </> speed, space play/pause, l loop, f frame-step, r reload, v versions</span>
+          </div>
+
+          <div class="video-wrap">
+            <video id="video" controls playsinline></video>
+            <div class="overlay" id="overlay"></div>
+          </div>
+
+          <div class="controls">
+            <div class="control-group">
+              <label>Speed</label>
+              <select id="speed">
+                <option value="0.25">0.25x</option>
+                <option value="0.5">0.5x</option>
+                <option value="1">1x</option>
+                <option value="2">2x</option>
+                <option value="5">5x</option>
+                <option value="10" selected>10x</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label><input type="checkbox" id="loop" /> Loop</label>
+            </div>
+            <div class="control-group">
+              <label><input type="checkbox" id="autoplay" checked /> Auto-play</label>
+            </div>
+            <div class="control-group">
+              <button id="btnPrev">Prev</button>
+              <button id="btnNext">Next</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel versions-panel hidden" id="versionsPanel">
+          <div class="panel-title">Rubric versions</div>
+          <div class="versions" id="versions"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
