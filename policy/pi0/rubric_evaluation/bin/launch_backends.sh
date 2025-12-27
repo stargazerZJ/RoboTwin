@@ -7,24 +7,26 @@ set -euo pipefail
 # IMPORTANT (tyro subcommand ordering):
 # - `policy:checkpoint` is a subcommand.
 # - `--policy.config` and `--policy.dir` are ONLY valid for that subcommand.
-# - `--port` and `--default-prompt` are top-level args.
+# - `--port`, `--default-prompt`, and `--robotwin-repo-id` are top-level args.
 #
 # Correct form (matches `serve_policy.py --help`):
-#   serve_policy.py --port 8000 --default-prompt "..." policy:checkpoint --policy.config ... --policy.dir ...
+#   serve_policy.py --port 8000 --default-prompt "..." [--robotwin-repo-id ...] policy:checkpoint --policy.config ... --policy.dir ...
 #
 # Example:
 #   bash policy/pi0/rubric_evaluation/bin/launch_backends.sh \
 #     --train_config_name pi0_base_aloha_robotwin_lora \
 #     --model_name blocks_ranking_split \
 #     --checkpoint_id latest \
-#     --gpus 0,5,6,7 \
-#     --base_port 8000
+#     --gpus all \
+#     --base_port 8000 \
+#     --repo_id my_custom_dataset
 
 TRAIN_CONFIG_NAME="pi0_base_aloha_robotwin_lora"
 MODEL_NAME="blocks_ranking_split"
 CHECKPOINT_ID="latest"
 GPUS="all"
 BASE_PORT="8000"
+REPO_ID=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -33,6 +35,7 @@ while [[ $# -gt 0 ]]; do
     --checkpoint_id) CHECKPOINT_ID="$2"; shift 2;;
     --gpus) GPUS="$2"; shift 2;;
     --base_port) BASE_PORT="$2"; shift 2;;
+    --repo_id) REPO_ID="$2"; shift 2;;
     *) echo "Unknown arg: $1"; exit 1;;
   esac
 done
@@ -79,6 +82,15 @@ fi
 echo "Launching backends for ckpt: ${CKPT_DIR}"
 echo "GPU_IDS: ${GPU_IDS}"
 echo "BASE_PORT: ${BASE_PORT}"
+if [[ -n "$REPO_ID" ]]; then
+  echo "REPO_ID: ${REPO_ID}"
+fi
+
+# Build extra arguments for serve_policy
+EXTRA_ARGS=""
+if [[ -n "$REPO_ID" ]]; then
+  EXTRA_ARGS="--robotwin-repo-id ${REPO_ID}"
+fi
 
 for gid in ${GPU_IDS}; do
   port=$((BASE_PORT + gid))
@@ -89,6 +101,7 @@ for gid in ${GPU_IDS}; do
     python -m policy.pi0.scripts.serve_policy \
       --port "${port}" \
       --default-prompt "Rank the blocks by color: blue left, green middle, red right." \
+      ${EXTRA_ARGS} \
       policy:checkpoint \
       --policy.config "${TRAIN_CONFIG_NAME}" \
       --policy.dir "${CKPT_DIR}" \
