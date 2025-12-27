@@ -1480,16 +1480,15 @@ class Base_Task(gym.Env):
         if self.take_action_cnt == self.step_lim or self.eval_success:
             return
 
-        eval_video_freq = 1  # fixed
-        if (self.eval_video_path is not None and self.take_action_cnt % eval_video_freq == 0):
-            self.eval_video_ffmpeg.stdin.write(self.now_obs["observation"]["head_camera"]["rgb"].tobytes())
-
         self.take_action_cnt += 1
         print(f"step: \033[92m{self.take_action_cnt} / {self.step_lim}\033[0m", end="\r")
 
+        # Always update offscreen render; viewer rendering is optional (headless-safe).
         self._update_render()
         if self.render_freq:
             self.viewer.render()
+
+        # NOTE: Video frame capture moved to END of take_action() to avoid CUDA graph conflicts
 
         actions = np.array([action])
         left_jointstate = self.robot.get_left_arm_jointState()
@@ -1570,7 +1569,7 @@ class Base_Task(gym.Env):
             if right_n_step == 0:
                 topp_right_flag = False
                 right_n_step = 50  # fixed
-        
+
         elif action_type == 'ee':
 
             left_result = self.robot.left_plan_path(left_arm_actions[0])
@@ -1579,10 +1578,10 @@ class Base_Task(gym.Env):
                 left_n_step = 50
                 topp_left_flag = False
                 # print("left fail")
-            else: 
+            else:
                 left_n_step = left_result["position"].shape[0]
                 topp_left_flag = True
-            
+
             if right_result["status"] != "Success":
                 right_n_step = 50
                 topp_right_flag = False
@@ -1653,7 +1652,7 @@ class Base_Task(gym.Env):
 
             self.scene.step()
             self._update_render()
-                
+
             if self.check_success():
                 self.eval_success = True
                 self.get_obs() # update obs
@@ -1664,6 +1663,13 @@ class Base_Task(gym.Env):
         self._update_render()
         if self.render_freq:  # UI
             self.viewer.render()
+
+        # Evaluation video: capture frame at END of action, after all physics/rendering is complete.
+        # This avoids CUDA graph capture conflicts with SAPIEN's ray tracer.
+        if self.eval_video_path is not None:
+            self.cameras.update_picture()
+            head_rgb = self.cameras.get_rgb()["head_camera"]["rgb"]
+            self.eval_video_ffmpeg.stdin.write(head_rgb.tobytes())
 
 
     def save_camera_images(self, task_name, step_name, generate_num_id, save_dir="./camera_images"):
@@ -1684,11 +1690,11 @@ class Base_Task(gym.Env):
         # Create a subdirectory specific to the task
         task_dir = os.path.join(save_dir, task_name)
         os.makedirs(task_dir, exist_ok=True)
-        
+
         # Create a subdirectory for the given generate_num_id
         generate_dir = os.path.join(task_dir, generate_num_id)
         os.makedirs(generate_dir, exist_ok=True)
-        
+
         obs = self.get_obs()
         cam_obs = obs["observation"]
         image_data = {}
@@ -1708,16 +1714,16 @@ class Base_Task(gym.Env):
             rgb = cam_obs[cam_name]["rgb"]
             if rgb.dtype != np.uint8:
                 rgb = (rgb * 255).clip(0, 255).astype(np.uint8)
-            
+
             # Use the instance's ep_num as the episode number
             episode_num = getattr(self, 'ep_num', 0)
-            
+
             # Save image to the subdirectory for the specific generate_num_id
             filename = f"episode{episode_num}_{step_num}_{step_description}.png"
             filepath = os.path.join(generate_dir, filename)
             imageio.imwrite(filepath, rgb)
             image_data[cam_name] = rgb
-            
+
             # print(f"Saving image with episode_num={episode_num}, filename: {filename}, path: {generate_dir}")
-        
+
         return image_data
