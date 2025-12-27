@@ -47,8 +47,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-source policy/pi0/.venv/bin/activate
-cd /home/ubuntu/RoboTwin
+# Determine repo root from script location (script is in policy/pi0/rubric_evaluation/bin/)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+cd "${REPO_ROOT}"
+
+# Activate venv (relative to repo root)
+if [[ -f "policy/pi0/.venv/bin/activate" ]]; then
+  source "policy/pi0/.venv/bin/activate"
+fi
 
 python -m policy.pi0.rubric_evaluation.server.main \
   --task_name "${TASK_NAME}" \

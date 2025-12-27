@@ -40,9 +40,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Activate venv and run from repo root
-source policy/pi0/.venv/bin/activate
-cd /home/ubuntu/RoboTwin
+# Determine repo root from script location (script is in policy/pi0/rubric_evaluation/bin/)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+cd "${REPO_ROOT}"
+
+# Activate venv (relative to repo root)
+if [[ -f "policy/pi0/.venv/bin/activate" ]]; then
+  source "policy/pi0/.venv/bin/activate"
+fi
 
 # Resolve GPU list
 if [[ "$GPUS" == "all" ]]; then
@@ -105,9 +111,9 @@ for gid in ${GPU_IDS}; do
       policy:checkpoint \
       --policy.config "${TRAIN_CONFIG_NAME}" \
       --policy.dir "${CKPT_DIR}" \
-      > "policy/pi0/rubric_evaluation/backend_gpu${gid}.log" 2>&1 &
+      > "${REPO_ROOT}/policy/pi0/rubric_evaluation/backend_gpu${gid}.log" 2>&1 &
 done
 
-echo "Backends launched in background. Logs: policy/pi0/rubric_evaluation/backend_gpu*.log"
+echo "Backends launched in background. Logs: ${REPO_ROOT}/policy/pi0/rubric_evaluation/backend_gpu*.log"
 echo "PIDs:"
 jobs -p || true

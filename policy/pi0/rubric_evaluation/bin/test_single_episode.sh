@@ -4,12 +4,19 @@
 # Example: bash policy/pi0/rubric_evaluation/bin/test_single_episode.sh 8004
 
 set -e
-cd "$(dirname "$0")/../../../.."
+
+# Determine repo root from script location (script is in policy/pi0/rubric_evaluation/bin/)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+cd "${REPO_ROOT}"
 
 GPU_PORT=${1:-8004}
 OUT_DIR="policy/pi0/rubric_evaluation/runs_single_debug/test_fix_$(date +%s)"
 
-source policy/pi0/.venv/bin/activate
+# Activate venv (relative to repo root)
+if [[ -f "policy/pi0/.venv/bin/activate" ]]; then
+  source "policy/pi0/.venv/bin/activate"
+fi
 
 python -c "
 import sys
