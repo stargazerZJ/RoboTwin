@@ -1,5 +1,4 @@
 import sys
-
 import os
 import h5py
 import numpy as np
@@ -7,6 +6,7 @@ import pickle
 import cv2
 import argparse
 import yaml, json
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
 def load_hdf5(dataset_path):
@@ -51,16 +51,11 @@ def get_task_config(task_name):
     return args
 
 
-def data_transform(path, episode_num, save_path):
-    begin = 0
-    floders = os.listdir(path)
-    # assert episode_num <= len(floders), "data num not enough"
+def process_single_episode(args):
+    """Process a single episode - designed for parallel execution"""
+    path, save_path, i = args
 
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
-
-    for i in range(episode_num):
-
+    try:
         desc_type = "seen"
         instruction_data_path = os.path.join(path, "instructions", f"episode{i}.json")
         with open(instruction_data_path, "r") as f_instr:
@@ -76,8 +71,10 @@ def data_transform(path, episode_num, save_path):
         ) as f:
             json.dump(save_instructions_json, f, indent=2)
 
-        left_gripper_all, left_arm_all, right_gripper_all, right_arm_all, image_dict = (load_hdf5(
-            os.path.join(path, "data", f"episode{i}.hdf5")))
+        left_gripper_all, left_arm_all, right_gripper_all, right_arm_all, image_dict = (
+            load_hdf5(os.path.join(path, "data", f"episode{i}.hdf5"))
+        )
+
         qpos = []
         actions = []
         cam_high = []
@@ -86,9 +83,7 @@ def data_transform(path, episode_num, save_path):
         left_arm_dim = []
         right_arm_dim = []
 
-        last_state = None
         for j in range(0, left_gripper_all.shape[0]):
-
             left_gripper, left_arm, right_gripper, right_arm = (
                 left_gripper_all[j],
                 left_arm_all[j],
@@ -96,8 +91,9 @@ def data_transform(path, episode_num, save_path):
                 right_arm_all[j],
             )
 
-            state = np.array(left_arm.tolist() + [left_gripper] + right_arm.tolist() + [right_gripper])  # joints angle
-
+            state = np.array(
+                left_arm.tolist() + [left_gripper] + right_arm.tolist() + [right_gripper]
+            )
             state = state.astype(np.float32)
 
             if j != left_gripper_all.shape[0] - 1:
@@ -140,10 +136,46 @@ def data_transform(path, episode_num, save_path):
             image.create_dataset("cam_right_wrist", data=cam_right_wrist_enc, dtype=f"S{len_right}")
             image.create_dataset("cam_left_wrist", data=cam_left_wrist_enc, dtype=f"S{len_left}")
 
-        begin += 1
-        print(f"proccess {i} success!")
+        return (i, True, None)
 
-    return begin
+    except Exception as e:
+        return (i, False, str(e))
+
+
+def data_transform(path, episode_num, save_path, num_workers=16):
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+
+    # Prepare arguments for each episode
+    args_list = [(path, save_path, i) for i in range(episode_num)]
+
+    completed = 0
+    failed = 0
+
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        # Submit all tasks
+        future_to_episode = {
+            executor.submit(process_single_episode, args): args[2]
+            for args in args_list
+        }
+
+        # Process results as they complete
+        for future in as_completed(future_to_episode):
+            episode_idx = future_to_episode[future]
+            try:
+                i, success, error = future.result()
+                if success:
+                    completed += 1
+                    print(f"process {i} success! ({completed}/{episode_num})")
+                else:
+                    failed += 1
+                    print(f"process {i} failed: {error}")
+            except Exception as e:
+                failed += 1
+                print(f"process {episode_idx} raised exception: {e}")
+
+    print(f"\nCompleted: {completed}, Failed: {failed}")
+    return completed
 
 
 if __name__ == "__main__":
@@ -161,20 +193,28 @@ if __name__ == "__main__":
         default=50,
         help="Number of episodes to process (e.g., 50)",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=16,
+        help="Number of parallel workers (default: 16)",
+    )
     args = parser.parse_args()
 
     task_name = args.task_name
     setting = args.setting
     expert_data_num = args.expert_data_num
+    num_workers = args.workers
 
     load_dir = os.path.join("../../data", str(task_name), str(setting))
 
-    begin = 0
-    print(f'read data from path:{os.path.join("data", load_dir)}')
+    print(f'Read data from path: {os.path.join("data", load_dir)}')
+    print(f'Using {num_workers} workers')
 
     target_dir = f"processed_data/{task_name}-{setting}-{expert_data_num}"
-    begin = data_transform(
+    completed = data_transform(
         load_dir,
         expert_data_num,
         target_dir,
+        num_workers=num_workers,
     )
