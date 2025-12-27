@@ -32,7 +32,9 @@ def create_app(*, cfg: EvalConfig, manager: EvalManager) -> FastAPI:
         cur = manager.current_version()
         return {
             "running": s.running,
+            "model_name": cfg.model_name,
             "task_name": s.task_name,
+            "task_config": cfg.task_config,
             "num_episodes": s.num_episodes,
             "evaluated": s.evaluated,
             "success": s.success,
@@ -97,12 +99,13 @@ def create_app(*, cfg: EvalConfig, manager: EvalManager) -> FastAPI:
                 continue
         return {"episodes": episodes}
 
-    @app.get("/runs/{task_name}/{version_id}/videos/{video_name}")
-    def serve_video(task_name: str, version_id: str, video_name: str):
+    @app.get("/runs/{model_name}/{task_name_config}/{version_id}/videos/{video_name}")
+    def serve_video(model_name: str, task_name_config: str, version_id: str, video_name: str):
         # StaticFiles doesn't support dynamic roots easily; serve via file response
+        # Directory structure: runs/{model_name}/{task_name}-{task_config}/{version_id}
         from fastapi.responses import FileResponse
 
-        p = cfg.runs_root / task_name / version_id / "videos" / video_name
+        p = cfg.runs_root / model_name / task_name_config / version_id / "videos" / video_name
         if not p.exists():
             raise HTTPException(status_code=404, detail="Video not found")
         return FileResponse(str(p), media_type="video/mp4")

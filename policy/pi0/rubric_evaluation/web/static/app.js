@@ -35,7 +35,7 @@ function renderStatus(){
   if(!s){ $("statusline").textContent = "Loading…"; return; }
   const rate = s.evaluated ? fmtPct(s.success_rate) : "—";
   $("statusline").textContent =
-    `task=${s.task_name} | version=${s.current_version_id ?? "—"} | ` +
+    `model=${s.model_name} | task=${s.task_name}-${s.task_config} | version=${s.current_version_id ?? "—"} | ` +
     `evaluated=${s.evaluated}/${s.num_episodes} | success=${s.success} | rate=${rate} | updated=${unixToLocal(s.last_update_unix)}`;
 }
 
@@ -79,7 +79,8 @@ function videoUrlForEpisode(ep){
   const s = state.status;
   if(!s || !s.current_version_id) return null;
   const name = `episode_${String(ep.episode_id).padStart(4,"0")}.mp4`;
-  return `/runs/${s.task_name}/${s.current_version_id}/videos/${name}`;
+  // Directory structure: runs/{model_name}/{task_name}-{task_config}/{version_id}/videos/
+  return `/runs/${s.model_name}/${s.task_name}-${s.task_config}/${s.current_version_id}/videos/${name}`;
 }
 
 function renderOverlay(ep){

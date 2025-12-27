@@ -59,7 +59,7 @@ bash policy/pi0/rubric_evaluation/bin/reload_rubric.sh
 ### 4) Roll back to a previous rubric version
 List versions in the UI (Versions panel) or on disk under:
 
-- `policy/pi0/rubric_evaluation/runs/blocks_ranking_rgb/`
+- `policy/pi0/rubric_evaluation/runs/{model_name}/{task_name}-{task_config}/`
 
 Then:
 
@@ -75,11 +75,12 @@ Rollback overwrites the current rubric code with the selected version and evalua
 
 - `bin/` — bash scripts to launch backends, start server, reload, rollback.
 - `rubrics/` — the *current* editable rubric file (what you edit).
-- `runs/` — rubric version folders:
-  - `rubric.py` (snapshotted rubric code)
-  - `metrics.jsonl` (streaming per-episode results)
-  - `videos/episode_XXXX.mp4`
-  - `state.json` (resume bookkeeping)
+- `runs/` — rubric version folders organized by model and task:
+  - `{model_name}/{task_name}-{task_config}/{version_id}/`
+    - `rubric.py` (snapshotted rubric code)
+    - `metrics.jsonl` (streaming per-episode results)
+    - `videos/episode_XXXX.mp4`
+    - `state.json` (resume bookkeeping)
 - `web/` — static web UI (HTML/JS/CSS).
 - `server/` — evaluation manager + web server (FastAPI).
 

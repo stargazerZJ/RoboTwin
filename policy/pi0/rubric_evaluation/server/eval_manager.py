@@ -209,7 +209,7 @@ class EvalManager:
         return self._cfg
 
     def list_versions(self) -> list[RubricVersion]:
-        return list_versions(self._cfg.runs_root, self._cfg.task_name)
+        return list_versions(self._cfg.runs_root, self._cfg.model_name, self._cfg.task_name, self._cfg.task_config)
 
     def current_version(self) -> RubricVersion | None:
         with self._lock:
@@ -237,7 +237,9 @@ class EvalManager:
         return create_new_version(
             runs_root=self._cfg.runs_root,
             current_rubric_path=self._current_rubric_path,
+            model_name=self._cfg.model_name,
             task_name=self._cfg.task_name,
+            task_config=self._cfg.task_config,
         )
 
     def start(self) -> None:
@@ -292,7 +294,9 @@ class EvalManager:
             v = create_new_version(
                 runs_root=self._cfg.runs_root,
                 current_rubric_path=self._current_rubric_path,
+                model_name=self._cfg.model_name,
                 task_name=self._cfg.task_name,
+                task_config=self._cfg.task_config,
             )
             self._current_version = v
             self._success = 0
@@ -304,7 +308,9 @@ class EvalManager:
         with self._lock:
             version_dir = rollback_to_version(
                 runs_root=self._cfg.runs_root,
+                model_name=self._cfg.model_name,
                 task_name=self._cfg.task_name,
+                task_config=self._cfg.task_config,
                 version_id=version_id,
                 current_rubric_path=self._current_rubric_path,
             )

@@ -39,14 +39,17 @@ def extract_rubric_summary(rubric_source: str) -> str:
 def _ensure_version_dir(
     *,
     runs_root: Path,
+    model_name: str,
     task_name: str,
+    task_config: str,
     version_id: str,
     rubric_source: str,
     sha256: str,
     summary: str,
     created_at: int,
 ) -> RubricVersion:
-    version_dir = runs_root / task_name / version_id
+    # Directory structure: runs/{model_name}/{task_name}-{task_config}/{version_id}
+    version_dir = runs_root / model_name / f"{task_name}-{task_config}" / version_id
     version_dir.mkdir(parents=True, exist_ok=True)
 
     rubric_path = version_dir / "rubric.py"
@@ -83,7 +86,9 @@ def create_new_version(
     *,
     runs_root: Path,
     current_rubric_path: Path,
+    model_name: str,
     task_name: str,
+    task_config: str,
 ) -> RubricVersion:
     """
     Snapshot the current rubric into a version folder.
@@ -99,7 +104,7 @@ def create_new_version(
     summary = extract_rubric_summary(src)
 
     # If latest version has same sha, reuse it
-    versions = list_versions(runs_root, task_name)
+    versions = list_versions(runs_root, model_name, task_name, task_config)
     if versions and versions[0].sha256 == sha:
         return versions[0]
 
@@ -107,7 +112,9 @@ def create_new_version(
     version_id = f"{created_at}_{sha[:8]}"
     return _ensure_version_dir(
         runs_root=runs_root,
+        model_name=model_name,
         task_name=task_name,
+        task_config=task_config,
         version_id=version_id,
         rubric_source=src,
         sha256=sha,
@@ -126,8 +133,9 @@ def save_state(version_dir: Path, state: Dict[str, Any]) -> None:
     p.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
-def list_versions(runs_root: Path, task_name: str) -> list[RubricVersion]:
-    task_dir = runs_root / task_name
+def list_versions(runs_root: Path, model_name: str, task_name: str, task_config: str) -> list[RubricVersion]:
+    # Directory structure: runs/{model_name}/{task_name}-{task_config}/{version_id}
+    task_dir = runs_root / model_name / f"{task_name}-{task_config}"
     if not task_dir.exists():
         return []
     versions: list[RubricVersion] = []
@@ -156,11 +164,14 @@ def list_versions(runs_root: Path, task_name: str) -> list[RubricVersion]:
 def rollback_to_version(
     *,
     runs_root: Path,
+    model_name: str,
     task_name: str,
+    task_config: str,
     version_id: str,
     current_rubric_path: Path,
 ) -> Path:
-    version_dir = runs_root / task_name / version_id
+    # Directory structure: runs/{model_name}/{task_name}-{task_config}/{version_id}
+    version_dir = runs_root / model_name / f"{task_name}-{task_config}" / version_id
     rubric_path = version_dir / "rubric.py"
     if not rubric_path.exists():
         raise FileNotFoundError(f"Rubric version not found: {rubric_path}")
