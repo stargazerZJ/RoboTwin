@@ -18,14 +18,28 @@ function unixToLocal(ts){
   return d.toLocaleString();
 }
 
+// Get base URL for API requests (handles reverse proxy with path prefix)
+function getBaseUrl(){
+  // Use the current page's URL as the base, stripping any trailing filename
+  const loc = window.location;
+  let base = loc.pathname;
+  // Ensure base ends with /
+  if(!base.endsWith('/')) base = base.substring(0, base.lastIndexOf('/') + 1) || '/';
+  return loc.origin + base;
+}
+
 async function apiGet(path){
-  const r = await fetch(path);
+  // Remove leading slash to make path relative
+  const relPath = path.startsWith('/') ? path.slice(1) : path;
+  const r = await fetch(getBaseUrl() + relPath);
   if(!r.ok) throw new Error(await r.text());
   return await r.json();
 }
 
 async function apiPost(path){
-  const r = await fetch(path, {method:"POST"});
+  // Remove leading slash to make path relative
+  const relPath = path.startsWith('/') ? path.slice(1) : path;
+  const r = await fetch(getBaseUrl() + relPath, {method:"POST"});
   if(!r.ok) throw new Error(await r.text());
   return await r.json();
 }
@@ -80,7 +94,8 @@ function videoUrlForEpisode(ep){
   if(!s || !s.current_version_id) return null;
   const name = `episode_${String(ep.episode_id).padStart(4,"0")}.mp4`;
   // Directory structure: runs/{model_name}/{task_name}-{task_config}/{version_id}/videos/
-  return `/runs/${s.model_name}/${s.task_name}-${s.task_config}/${s.current_version_id}/videos/${name}`;
+  // Use relative path to support reverse proxy
+  return `${getBaseUrl()}runs/${s.model_name}/${s.task_name}-${s.task_config}/${s.current_version_id}/videos/${name}`;
 }
 
 function renderOverlay(ep){
@@ -115,7 +130,7 @@ function selectEpisode(idx){
   const video = $("video");
   if(url){
     $("videoTitle").textContent = `Video: ep=${ep.episode_id}`;
-    if(video.src !== location.origin + url){
+    if(video.src !== url){
       video.src = url;
     }
     video.loop = state.loop;
