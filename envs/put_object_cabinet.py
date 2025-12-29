@@ -8,6 +8,23 @@ class put_object_cabinet(Base_Task):
 
     def setup_demo(self, **kwags):
         super()._init_task_env_(**kwags, table_static=False)
+        # Initialize attributes needed by check_success() for eval mode
+        # These are normally set in play_once() during data collection
+        self._init_eval_attributes()
+
+    def _init_eval_attributes(self):
+        """Initialize attributes needed for evaluation mode.
+
+        In data collection mode, these are set in play_once().
+        In eval mode, play_once() is not called, so we initialize them here.
+        """
+        # Store original object z position for height check in check_success()
+        self.origin_z = self.object.get_pose().p[2]
+        # Determine which arm should place the object based on object position
+        # Object on right side -> right arm places, left arm opens drawer
+        # Object on left side -> left arm places, right arm opens drawer
+        # ArmTag is already imported via 'from .utils import *' at top of file
+        self.arm_tag = ArmTag("right" if self.object.get_pose().p[0] > 0 else "left")
 
     def load_actors(self):
         self.model_name = "036_cabinet"
