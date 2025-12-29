@@ -53,26 +53,34 @@ def get_task_config(task_name):
 
 def process_single_episode(args):
     """Process a single episode - designed for parallel execution"""
-    path, save_path, i = args
+    path, save_path, i, output_idx = args
 
     try:
+        # Check if hdf5 file exists first
+        hdf5_input_path = os.path.join(path, "data", f"episode{i}.hdf5")
+        if not os.path.isfile(hdf5_input_path):
+            return (i, output_idx, False, f"HDF5 file not found: episode{i}.hdf5", True)  # True = skip
+
         desc_type = "seen"
         instruction_data_path = os.path.join(path, "instructions", f"episode{i}.json")
+        if not os.path.isfile(instruction_data_path):
+            return (i, output_idx, False, f"Instruction file not found: episode{i}.json", True)  # True = skip
+
         with open(instruction_data_path, "r") as f_instr:
             instruction_dict = json.load(f_instr)
         instructions = instruction_dict[desc_type]
         save_instructions_json = {"instructions": instructions}
 
-        os.makedirs(os.path.join(save_path, f"episode_{i}"), exist_ok=True)
+        os.makedirs(os.path.join(save_path, f"episode_{output_idx}"), exist_ok=True)
 
         with open(
-                os.path.join(os.path.join(save_path, f"episode_{i}"), "instructions.json"),
+                os.path.join(os.path.join(save_path, f"episode_{output_idx}"), "instructions.json"),
                 "w",
         ) as f:
             json.dump(save_instructions_json, f, indent=2)
 
         left_gripper_all, left_arm_all, right_gripper_all, right_arm_all, image_dict = (
-            load_hdf5(os.path.join(path, "data", f"episode{i}.hdf5"))
+            load_hdf5(hdf5_input_path)
         )
 
         qpos = []
@@ -120,7 +128,7 @@ def process_single_episode(args):
                 left_arm_dim.append(left_arm.shape[0])
                 right_arm_dim.append(right_arm.shape[0])
 
-        hdf5path = os.path.join(save_path, f"episode_{i}/episode_{i}.hdf5")
+        hdf5path = os.path.join(save_path, f"episode_{output_idx}/episode_{output_idx}.hdf5")
 
         with h5py.File(hdf5path, "w") as f:
             f.create_dataset("action", data=np.array(actions))
@@ -136,45 +144,63 @@ def process_single_episode(args):
             image.create_dataset("cam_right_wrist", data=cam_right_wrist_enc, dtype=f"S{len_right}")
             image.create_dataset("cam_left_wrist", data=cam_left_wrist_enc, dtype=f"S{len_left}")
 
-        return (i, True, None)
+        return (i, output_idx, True, None, False)  # False = not skipped
 
     except Exception as e:
-        return (i, False, str(e))
+        return (i, output_idx, False, str(e), False)  # False = not skipped (error)
 
 
 def data_transform(path, episode_num, save_path, num_workers=16):
     if not os.path.exists(save_path):
         os.makedirs(save_path)
 
-    # Prepare arguments for each episode
-    args_list = [(path, save_path, i) for i in range(episode_num)]
+    # First pass: check which episodes exist and assign continuous output indices
+    print("Scanning for existing episodes...")
+    existing_episodes = []
+    for i in range(episode_num):
+        hdf5_path = os.path.join(path, "data", f"episode{i}.hdf5")
+        if os.path.isfile(hdf5_path):
+            existing_episodes.append(i)
+        else:
+            print(f"  Skipping episode {i} (HDF5 file not found)")
+
+    print(f"Found {len(existing_episodes)} existing episodes out of {episode_num} requested")
+
+    # Prepare arguments with continuous output indices
+    args_list = [(path, save_path, src_idx, out_idx) for out_idx, src_idx in enumerate(existing_episodes)]
 
     completed = 0
     failed = 0
+    skipped = 0
+    total = len(args_list)
 
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         # Submit all tasks
         future_to_episode = {
-            executor.submit(process_single_episode, args): args[2]
+            executor.submit(process_single_episode, args): (args[2], args[3])  # (src_idx, out_idx)
             for args in args_list
         }
 
         # Process results as they complete
         for future in as_completed(future_to_episode):
-            episode_idx = future_to_episode[future]
+            src_idx, out_idx = future_to_episode[future]
             try:
-                i, success, error = future.result()
-                if success:
+                i, output_idx, success, error, is_skip = future.result()
+                if is_skip:
+                    skipped += 1
+                    print(f"process src={i} skipped: {error}")
+                elif success:
                     completed += 1
-                    print(f"process {i} success! ({completed}/{episode_num})")
+                    print(f"process src={i} -> out={output_idx} success! ({completed}/{total})")
                 else:
                     failed += 1
-                    print(f"process {i} failed: {error}")
+                    print(f"process src={i} -> out={output_idx} failed: {error}")
             except Exception as e:
                 failed += 1
-                print(f"process {episode_idx} raised exception: {e}")
+                print(f"process src={src_idx} -> out={out_idx} raised exception: {e}")
 
-    print(f"\nCompleted: {completed}, Failed: {failed}")
+    print(f"\nCompleted: {completed}, Failed: {failed}, Skipped: {skipped}")
+    print(f"Output episodes: 0 to {completed - 1} (continuous)")
     return completed
 
 
