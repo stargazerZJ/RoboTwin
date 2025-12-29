@@ -32,6 +32,7 @@ def _worker_process_main(
     max_steps: int,
     job_q: mp.Queue,
     result_q: mp.Queue,
+    retry_seed_counter: "mp.Value",  # Shared atomic counter for retry seeds
     log_dir: str,
     cwd: str,
 ) -> None:
@@ -123,8 +124,12 @@ def _worker_process_main(
                 )
                 logging.info(f"Episode {episode_id} completed: success={rec.get('success')}")
             except UnStableError:
-                logging.warning(f"Episode {episode_id} unstable, retrying with seed {seed + 1}")
-                job_q.put((episode_id, seed + 1, rubric_path, out_dir, version_id))
+                # Atomically get next retry seed to avoid collisions between workers
+                with retry_seed_counter.get_lock():
+                    next_seed = retry_seed_counter.value
+                    retry_seed_counter.value += 1
+                logging.warning(f"Episode {episode_id} unstable (seed={seed}), retrying with seed {next_seed}")
+                job_q.put((episode_id, next_seed, rubric_path, out_dir, version_id))
                 continue
             except Exception as e:
                 logging.error(f"Episode {episode_id} failed: {e}")
@@ -258,6 +263,12 @@ class EvalManager:
             v = self._current_version
             cwd = str(Path.cwd())  # Capture current working directory for spawned processes
             log_dir = str(v.version_dir)  # Fixed log directory at startup
+
+            # Create shared atomic counter for retry seeds (starts after all initial seeds)
+            # Initial seeds are: seed_start + episode_id for episode_id in [0, num_episodes)
+            # So retry seeds start at: seed_start + num_episodes
+            self._retry_seed_counter = self._mp_ctx.Value('i', self._cfg.seed_start + self._cfg.num_episodes)
+
             for backend in self._backends:
                 for worker_id in range(self._cfg.rollout_workers_per_backend):
                     # Create per-process job queue
@@ -274,6 +285,7 @@ class EvalManager:
                             self._cfg.max_steps,
                             job_q,
                             self._result_q,
+                            self._retry_seed_counter,  # Shared atomic counter for retry seeds
                             log_dir,  # Fixed log directory at startup
                             cwd,  # Pass working directory for relative path resolution
                         ),
