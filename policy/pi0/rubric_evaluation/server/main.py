@@ -49,7 +49,16 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, force=True)
     cfg = parse_args()
 
-    current_rubric_path = Path("policy/pi0/rubric_evaluation/rubrics/blocks_ranking_rgb_rubric.py")
+    # Dynamically select rubric based on task_name
+    # Rubric files are named: {task_name}_rubric.py
+    current_rubric_path = Path(f"policy/pi0/rubric_evaluation/rubrics/{cfg.task_name}_rubric.py")
+    if not current_rubric_path.exists():
+        logging.error(f"Rubric file not found: {current_rubric_path}")
+        logging.error(f"Please create a rubric file for task '{cfg.task_name}' at:")
+        logging.error(f"  {current_rubric_path}")
+        raise FileNotFoundError(f"Rubric file not found: {current_rubric_path}")
+
+    logging.info(f"Using rubric file: {current_rubric_path}")
     manager = EvalManager(cfg, current_rubric_path=current_rubric_path)
     manager.start()
 

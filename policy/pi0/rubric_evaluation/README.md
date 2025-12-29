@@ -1,11 +1,15 @@
 # Rubric Evaluation Server (Pi0)
 
-This directory contains a **fast iteration** evaluation system for `blocks_ranking_rgb` that:
+This directory contains a **fast iteration** evaluation system that supports **multiple tasks** including:
+- `blocks_ranking_rgb` - Arrange colored blocks in order (red-left, green-middle, blue-right)
+- `put_object_cabinet` - Open cabinet drawer and place object inside
 
+Features:
 - Keeps **policy inference warm** on multiple GPUs (websocket servers).
 - Runs **rollouts in parallel** and writes **streaming results** (JSONL + MP4).
 - Supports **rubric hot-reload** with **versioning** and **rollback**.
 - Provides a **web UI** optimized for fast inspection on a 4K monitor.
+- **Task-agnostic**: easily add new tasks by creating a rubric file.
 
 ## Quick start (tmux-friendly)
 
@@ -30,6 +34,7 @@ This starts one websocket policy server per GPU using [`policy/pi0/scripts/serve
 ### 2) Start the evaluation manager + web UI
 Run in another tmux window:
 
+**For blocks_ranking_rgb:**
 ```bash
 bash policy/pi0/rubric_evaluation/bin/start_server.sh \
   --task_name blocks_ranking_rgb \
@@ -43,12 +48,27 @@ bash policy/pi0/rubric_evaluation/bin/start_server.sh \
   --rollout_workers_per_backend 1
 ```
 
+**For put_object_cabinet:**
+```bash
+bash policy/pi0/rubric_evaluation/bin/start_server.sh \
+  --task_name put_object_cabinet \
+  --task_config demo_randomized \
+  --train_config_name pi0_base_aloha_robotwin_lora \
+  --model_name put_object_cabinet_model \
+  --checkpoint_id latest \
+  --gpus all \
+  --base_port 8000 \
+  --num_episodes 500 \
+  --rollout_workers_per_backend 1
+```
+
 Open the UI at: `http://localhost:8899`
 
 ### 3) Edit rubric and reload (no backend restart)
-Edit the rubric file:
+Edit the rubric file for your task:
 
-- [`policy/pi0/rubric_evaluation/rubrics/blocks_ranking_rgb_rubric.py`](policy/pi0/rubric_evaluation/rubrics/blocks_ranking_rgb_rubric.py:1)
+- [`policy/pi0/rubric_evaluation/rubrics/blocks_ranking_rgb_rubric.py`](policy/pi0/rubric_evaluation/rubrics/blocks_ranking_rgb_rubric.py:1) - for blocks_ranking_rgb
+- [`policy/pi0/rubric_evaluation/rubrics/put_object_cabinet_rubric.py`](policy/pi0/rubric_evaluation/rubrics/put_object_cabinet_rubric.py:1) - for put_object_cabinet
 
 Then notify the server to snapshot + reload the rubric (creates a new version folder):
 
@@ -74,7 +94,9 @@ Rollback overwrites the current rubric code with the selected version and evalua
 ## Folder layout
 
 - `bin/` — bash scripts to launch backends, start server, reload, rollback.
-- `rubrics/` — the *current* editable rubric file (what you edit).
+- `rubrics/` — editable rubric files (one per task, named `{task_name}_rubric.py`).
+  - `blocks_ranking_rgb_rubric.py` — baseline rubric for blocks ranking task
+  - `put_object_cabinet_rubric.py` — baseline rubric for put object in cabinet task
 - `runs/` — rubric version folders organized by model and task:
   - `{model_name}/{task_name}-{task_config}/{version_id}/`
     - `rubric.py` (snapshotted rubric code)
@@ -83,6 +105,43 @@ Rollback overwrites the current rubric code with the selected version and evalua
     - `state.json` (resume bookkeeping)
 - `web/` — static web UI (HTML/JS/CSS).
 - `server/` — evaluation manager + web server (FastAPI).
+
+---
+
+## Adding a new task
+
+To add evaluation support for a new task:
+
+1. **Create a rubric file** at `rubrics/{task_name}_rubric.py` following the pattern in existing rubrics.
+
+2. **Required rubric interface:**
+   ```python
+   @dataclass
+   class RubricConfig:
+       # Task-specific configuration (tolerances, thresholds, etc.)
+       pass
+
+   @dataclass
+   class RubricState:
+       # Per-episode state (prompt, tracking variables)
+       prompt: str = ""
+
+   def reset() -> RubricState:
+       """Called at episode start. Initialize state and select prompt."""
+       pass
+
+   def step(env: Any, observation: Dict[str, Any], state: RubricState, cfg: RubricConfig | None = None) -> Dict[str, Any]:
+       """Called every step. Returns: {"prompt": str, "subtask_state": int, "done": bool, "debug": dict}"""
+       pass
+   ```
+
+3. **Key implementation points:**
+   - Use `env` to access simulator state (object poses, robot state)
+   - `UNSEEN_PROMPT_TEMPLATES` should come from `description/task_instruction/{task_name}.json`
+   - `done` should match the task's `check_success()` logic
+   - `debug` dict is displayed in the web UI overlay
+
+4. **Start the server** with `--task_name your_task_name`
 
 ---
 
