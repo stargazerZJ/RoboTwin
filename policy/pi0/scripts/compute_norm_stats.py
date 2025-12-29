@@ -5,10 +5,12 @@ will compute the mean and standard deviation of the data in the dataset and save
 to the config assets directory.
 
 Supports two modes:
-1. Fast parquet-direct mode (default): Reads only numeric columns, skips image decoding
+1. Fast parquet-direct mode (default): Reads parquet files directly, expands actions
+   with horizon, and applies delta transform. Skips image decoding for speed.
 2. Full dataset mode: Uses LeRobotDataset with all transforms (slower but more accurate)
 
-Parallel data loading via ProcessPoolExecutor for better CPU utilization.
+Both modes produce identical results for state/action normalization statistics.
+The fast mode is recommended for large datasets as it's significantly faster.
 """
 
 import multiprocessing as mp
@@ -70,80 +72,102 @@ def _get_parquet_files(repo_id: str) -> list[Path]:
     return parquet_files
 
 
-def _read_parquet_chunk(parquet_path: str, use_delta_actions: bool = True) -> dict:
-    """Read state and action columns from a parquet file, skipping images.
-
-    Args:
-        parquet_path: Path to parquet file
-        use_delta_actions: If True, convert actions to delta (relative to state)
+def _read_all_parquet_data(parquet_files: list[Path]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Read all state and action data from parquet files.
 
     Returns:
-        Dict with 'state' and 'actions' numpy arrays
+        Tuple of (states, actions, episode_indices) arrays
     """
-    # Read only numeric columns, skip all image columns
-    table = pq.read_table(
-        parquet_path,
-        columns=["observation.state", "action"]
-    )
+    all_states = []
+    all_actions = []
+    all_episode_indices = []
 
-    # Convert to numpy
-    states_list = table["observation.state"].to_pylist()
-    actions_list = table["action"].to_pylist()
+    for pf in tqdm.tqdm(parquet_files, desc="Reading parquet files"):
+        table = pq.read_table(pf, columns=["observation.state", "action", "episode_index"])
+        states_list = table["observation.state"].to_pylist()
+        actions_list = table["action"].to_pylist()
+        episode_indices = table["episode_index"].to_pylist()
 
-    states = np.array(states_list, dtype=np.float32)
-    actions = np.array(actions_list, dtype=np.float32)
+        all_states.extend(states_list)
+        all_actions.extend(actions_list)
+        all_episode_indices.extend(episode_indices)
+
+    states = np.array(all_states, dtype=np.float32)
+    actions = np.array(all_actions, dtype=np.float32)
+    episode_indices = np.array(all_episode_indices, dtype=np.int64)
+
+    return states, actions, episode_indices
+
+
+def _expand_actions_with_horizon(
+    states: np.ndarray,
+    actions: np.ndarray,
+    episode_indices: np.ndarray,
+    action_horizon: int,
+    use_delta_actions: bool = True,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Expand actions with horizon and apply delta transform.
+
+    This mimics what LeRobotDataset does with delta_timestamps:
+    - For each frame, get the next `action_horizon` actions
+    - Pad with the last action if near episode end
+    - Apply delta transform (action - state) for joint dimensions
+
+    Args:
+        states: Shape (N, state_dim)
+        actions: Shape (N, action_dim)
+        episode_indices: Shape (N,) - episode index for each frame
+        action_horizon: Number of future actions to include
+        use_delta_actions: If True, convert joint actions to delta space
+
+    Returns:
+        Tuple of (states, expanded_actions) where expanded_actions shape is (N * horizon, action_dim)
+    """
+    N = len(states)
+    action_dim = actions.shape[-1]
+
+    # Build episode end indices for each frame (vectorized)
+    # Find where episode changes
+    episode_changes = np.where(np.diff(episode_indices) != 0)[0] + 1
+    episode_starts = np.concatenate([[0], episode_changes])
+    episode_ends = np.concatenate([episode_changes, [N]])
+
+    # Map each frame to its episode end
+    frame_to_ep_end = np.zeros(N, dtype=np.int64)
+    for start, end in zip(episode_starts, episode_ends):
+        frame_to_ep_end[start:end] = end
+
+    # Expand actions with horizon (vectorized)
+    # Create index array for all horizon steps
+    frame_indices = np.arange(N)[:, np.newaxis]  # (N, 1)
+    horizon_offsets = np.arange(action_horizon)[np.newaxis, :]  # (1, horizon)
+    future_indices = frame_indices + horizon_offsets  # (N, horizon)
+
+    # Clip to episode boundaries
+    ep_ends = frame_to_ep_end[:, np.newaxis]  # (N, 1)
+    future_indices = np.minimum(future_indices, ep_ends - 1)
+
+    # Gather actions
+    expanded_actions = actions[future_indices]  # (N, horizon, action_dim)
 
     # Apply delta action transform (same as DeltaActions transform)
     # For Aloha: delta for joints (first 6), absolute for gripper (7th)
     # Left arm: dims 0-5 delta, dim 6 absolute
     # Right arm: dims 7-12 delta, dim 13 absolute
-    if use_delta_actions and states.shape[-1] == 14 and actions.shape[-1] == 14:
+    if use_delta_actions and states.shape[-1] == 14 and action_dim == 14:
         # Create delta mask: True for joint dims, False for gripper dims
         delta_mask = np.array([True, True, True, True, True, True, False,  # left arm
                                True, True, True, True, True, True, False], dtype=bool)  # right arm
-        # actions = actions - state for masked dimensions
-        actions[:, delta_mask] = actions[:, delta_mask] - states[:, delta_mask]
+        # Vectorized: expanded_actions[:, :, mask] -= states[:, np.newaxis, mask]
+        expanded_actions[:, :, delta_mask] = (
+            expanded_actions[:, :, delta_mask] - states[:, np.newaxis, delta_mask]
+        )
 
-    return {
-        "state": states,
-        "actions": actions,
-    }
+    # Flatten horizon into samples for computing statistics
+    # Shape: (N * horizon, action_dim)
+    flattened_actions = expanded_actions.reshape(-1, action_dim)
 
-
-def _parallel_read_parquet(
-    parquet_files: list[Path],
-    num_workers: int,
-    use_delta_actions: bool = True,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Read all parquet files in parallel, extracting only state and actions."""
-
-    all_states = []
-    all_actions = []
-
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        # Submit all files
-        futures = {
-            executor.submit(_read_parquet_chunk, str(pf), use_delta_actions): pf
-            for pf in parquet_files
-        }
-
-        # Collect results with progress bar
-        with tqdm.tqdm(total=len(parquet_files), desc="Reading parquet files") as pbar:
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    all_states.append(result["state"])
-                    all_actions.append(result["actions"])
-                except Exception as e:
-                    pf = futures[future]
-                    print(f"Error reading {pf}: {e}")
-                pbar.update(1)
-
-    # Concatenate all data
-    states = np.concatenate(all_states, axis=0)
-    actions = np.concatenate(all_actions, axis=0)
-
-    return states, actions
+    return states, flattened_actions
 
 
 # ============== Full dataset mode (slower, uses LeRobotDataset) ==============
@@ -209,29 +233,49 @@ def main(
     if num_workers is None:
         num_workers = min(os.cpu_count() or 1, 64)
 
+    # Get action horizon from model config
+    action_horizon = config.model.action_horizon
+
     print(f"Config: {config_name}")
     print(f"Repo ID: {data_config.repo_id}")
     print(f"Fast mode: {fast_mode}, Delta actions: {use_delta_actions}")
+    print(f"Action horizon: {action_horizon}")
     print(f"Workers: {num_workers}")
 
     if fast_mode:
-        # Fast parquet-direct mode
+        # Fast parquet-direct mode with horizon expansion
         parquet_files = _get_parquet_files(data_config.repo_id)
         print(f"Found {len(parquet_files)} parquet files")
 
-        states, actions = _parallel_read_parquet(
-            parquet_files,
-            num_workers=num_workers,
+        # Read all data
+        print("Reading all parquet data...")
+        states, actions, episode_indices = _read_all_parquet_data(parquet_files)
+        print(f"Loaded {len(states)} frames")
+
+        # Expand actions with horizon and apply delta transform
+        # Must be done before subsampling to preserve sequential relationships
+        print(f"Expanding actions with horizon={action_horizon}...")
+        states, actions = _expand_actions_with_horizon(
+            states, actions, episode_indices,
+            action_horizon=action_horizon,
             use_delta_actions=use_delta_actions,
         )
+        print(f"Expanded actions shape: {actions.shape}")
 
+        # Subsample after expansion if needed
+        # Note: actions are already flattened to (N * horizon, action_dim)
+        # We subsample states and corresponding action chunks
         if max_frames is not None and max_frames < len(states):
             rng = np.random.default_rng(seed=42)
             indices = rng.choice(len(states), size=max_frames, replace=False)
             states = states[indices]
-            # For actions, we need to handle the horizon dimension
-            # In fast mode, actions are per-frame (no horizon expansion)
-            actions = actions[indices]
+            # For actions, select corresponding horizon chunks
+            action_indices = np.concatenate([
+                np.arange(i * action_horizon, (i + 1) * action_horizon)
+                for i in indices
+            ])
+            actions = actions[action_indices]
+            print(f"Subsampled to {len(states)} frames, {len(actions)} action samples")
     else:
         # Full dataset mode (slower, loads images)
         _, dataset = create_dataset(config)
