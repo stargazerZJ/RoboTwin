@@ -208,13 +208,13 @@ def step(env: Any, observation: Dict[str, Any], state: RubricState, cfg: RubricC
 
     drawer_qpos = _get_drawer_qpos(env)
 
-    # Compute distances
-    grasp_dist = np.linalg.norm(grasp_ee_pos - object_xyz)
+    # Compute distances (XY only for grasp - z varies during approach)
+    grasp_dist_xy = np.linalg.norm(grasp_ee_pos[:2] - object_xyz[:2])
     dist_xy = np.abs(object_xyz[:2] - target_xyz[:2])
     z_lift = object_xyz[2] - origin_z
 
     # Subtask completion conditions
-    subtask_0_complete = grasp_gripper_close and grasp_dist < cfg.grasp_dist_threshold
+    subtask_0_complete = grasp_dist_xy < cfg.grasp_dist_threshold
     subtask_1_complete = drawer_qpos > cfg.drawer_open_threshold
 
     xy_at_target = _within_eps_xy(object_xyz[:2], target_xyz[:2], cfg.eps_xy)
@@ -241,7 +241,7 @@ def step(env: Any, observation: Dict[str, Any], state: RubricState, cfg: RubricC
 
         # Subtask 0 info
         "grasp_arm": state.grasp_arm,
-        "grasp_dist": float(grasp_dist),
+        "grasp_dist_xy": float(grasp_dist_xy),
         "grasp_dist_threshold": float(cfg.grasp_dist_threshold),
         "grasp_gripper_close": bool(grasp_gripper_close),
         "subtask_0_complete": bool(subtask_0_complete),
