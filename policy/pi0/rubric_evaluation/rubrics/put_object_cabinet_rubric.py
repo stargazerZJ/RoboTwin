@@ -10,6 +10,8 @@ RUBRIC_SUMMARY (parsed by server; keep this block up to date)
 - Each subtask has a focused prompt to guide the model.
 - Transitions are based on observable state (gripper near object + closed, drawer open, etc.)
 - Debug overlay: subtask state, transition conditions, distances, gripper states.
+- Object descriptions are loaded from description/objects_description/{modelname}/base{id}.json
+- The SAME description is used across all subtasks within an episode.
 
 Motivation:
 - VLA models trained on successful demonstrations cannot recover from failures.
@@ -24,8 +26,11 @@ Subtask Completion Criteria:
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -77,7 +82,9 @@ class RubricState:
     """State machine for subtask progression."""
     subtask: int = 0  # Current subtask: 0=grasp, 1=open_drawer, 2=place
     prompt: str = ""
-    object_name: str = ""
+    object_name: str = ""  # Descriptive object name (e.g., "dark gray mouse with scroll wheel")
+    object_model_name: str = ""  # Raw model name (e.g., "047_mouse")
+    object_model_id: int = 0  # Model ID for description file
     grasp_arm: str = ""  # Arm that grasps the object
     drawer_arm: str = ""  # Arm that opens the drawer (opposite of grasp_arm)
     initialized: bool = False
@@ -89,6 +96,44 @@ def _format_object_name(model_name: str) -> str:
     if len(parts) > 1 and parts[0].isdigit():
         return " ".join(parts[1:])
     return model_name.replace("_", " ")
+
+
+def _load_object_descriptions(model_name: str, model_id: int) -> List[str]:
+    """
+    Load object descriptions from description/objects_description/{model_name}/base{id}.json.
+
+    Returns a list of descriptions (seen + unseen) or a fallback list with the formatted name.
+    """
+    # Try to find the description file
+    # First look relative to this file, then relative to workspace root
+    possible_paths = [
+        Path(__file__).parent.parent.parent.parent.parent / "description" / "objects_description" / model_name / f"base{model_id}.json",
+        Path("description") / "objects_description" / model_name / f"base{model_id}.json",
+    ]
+
+    for desc_path in possible_paths:
+        if desc_path.exists():
+            try:
+                with open(desc_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                descriptions = []
+                if "seen" in data and isinstance(data["seen"], list):
+                    descriptions.extend(data["seen"])
+                if "unseen" in data and isinstance(data["unseen"], list):
+                    descriptions.extend(data["unseen"])
+                if descriptions:
+                    return descriptions
+            except Exception:
+                pass
+
+    # Fallback: use formatted model name
+    return [_format_object_name(model_name)]
+
+
+def _get_random_object_description(model_name: str, model_id: int) -> str:
+    """Get a random object description for the given model."""
+    descriptions = _load_object_descriptions(model_name, model_id)
+    return np.random.choice(descriptions)
 
 
 def _get_object_xyz(env: Any) -> np.ndarray:
@@ -182,8 +227,15 @@ def step(env: Any, observation: Dict[str, Any], state: RubricState, cfg: RubricC
 
     # Initialize state on first step (when env has object info)
     if not state.initialized:
-        object_model_name = getattr(env, "selected_modelname", "object")
-        state.object_name = _format_object_name(object_model_name)
+        # Get object model info
+        state.object_model_name = getattr(env, "selected_modelname", "object")
+        state.object_model_id = getattr(env, "selected_model_id", 0)
+
+        # Get a descriptive object name (same across all subtasks in this episode)
+        state.object_name = _get_random_object_description(
+            state.object_model_name,
+            state.object_model_id
+        )
 
         # Determine arm assignments based on object position
         arm_tag = str(getattr(env, "arm_tag", "left"))
@@ -264,6 +316,8 @@ def step(env: Any, observation: Dict[str, Any], state: RubricState, cfg: RubricC
 
         # General info
         "object_name": state.object_name,
+        "object_model_name": state.object_model_name,
+        "object_model_id": state.object_model_id,
         "eps_xy": list(cfg.eps_xy),
         "z_range": [float(cfg.z_min), float(cfg.z_max)],
     }
