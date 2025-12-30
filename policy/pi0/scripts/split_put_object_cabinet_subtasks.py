@@ -3,7 +3,7 @@
 Split Pi0 processed put_object_cabinet episodes into 3 sub-episodes based on arm movements.
 
 The put_object_cabinet task has three subtasks:
-  - Subtask 0: Grasp the object with the correct arm (arm_tag based on object position)
+  - Subtask 0: Grasp the object with the correct arm (first arm to move)
   - Subtask 1: Open the drawer with the other arm
   - Subtask 2: Move the object into the drawer (with the first arm again)
 
@@ -11,11 +11,10 @@ Splitting strategy:
   Since we only have arm positions and camera videos (no object/drawer state), we detect
   subtask boundaries by analyzing arm movement patterns:
 
-  1. Find when each arm has significant movement (velocity above threshold)
-  2. Identify the three phases:
-     - Phase 1: First arm moves (grasping object)
-     - Phase 2: Second arm moves (opening drawer)
-     - Phase 3: First arm moves again (placing object)
+  1. The first arm to move is the arm used in subtask 0 (grasping object)
+  2. Split 1 (end of subtask 0): The first time the OTHER arm starts moving
+  3. Split 2 (end of subtask 1): The first time the FIRST arm moves again, after split 1
+  4. The rest is subtask 2 (placing object in drawer)
 
 Input dataset format (per episode):
 - episode_{i}/episode_{i}.hdf5
@@ -158,41 +157,32 @@ def _compute_arm_velocities(qpos: np.ndarray, left_arm_dim: int, right_arm_dim: 
     return left_vel_smooth, right_vel_smooth
 
 
-def _detect_arm_activity_periods(vel: np.ndarray, threshold: float, min_duration: int = 10) -> List[Tuple[int, int]]:
+def _find_first_movement(vel: np.ndarray, threshold: float, start_from: int = 0) -> Optional[int]:
     """
-    Detect continuous periods where velocity exceeds threshold.
-    Returns list of (start, end) tuples.
+    Find the first frame where velocity exceeds threshold, starting from start_from.
+    Returns the frame index or None if not found.
     """
-    active = vel > threshold
-    periods = []
-    in_period = False
-    start = 0
-
-    for i, a in enumerate(active):
-        if a and not in_period:
-            start = i
-            in_period = True
-        elif not a and in_period:
-            if i - start >= min_duration:
-                periods.append((start, i))
-            in_period = False
-
-    # Handle period at end
-    if in_period and len(active) - start >= min_duration:
-        periods.append((start, len(active)))
-
-    return periods
+    for i in range(start_from, len(vel)):
+        if vel[i] > threshold:
+            return i
+    return None
 
 
 def _find_split_points(qpos: np.ndarray, left_arm_dim: int, right_arm_dim: int,
-                       velocity_threshold: float = 0.01, verbose: bool = False) -> Tuple[Optional[int], Optional[int], str]:
+                       velocity_threshold: float = 0.002, verbose: bool = False) -> Tuple[Optional[int], Optional[int], str]:
     """
     Find the two split points based on arm movement patterns.
 
+    New criteria:
+    1. The first arm to move is the arm used in subtask 0
+    2. Split 1 (end of subtask 0): The first time the OTHER arm starts moving
+    3. Split 2 (end of subtask 1): The first time the FIRST arm moves again, after split 1
+    4. The rest is subtask 2
+
     Returns:
         (split1, split2, which_arm_first)
-        - split1: end of first arm's initial movement (subtask 0 -> 1)
-        - split2: end of second arm's movement (subtask 1 -> 2)
+        - split1: first time second arm moves (subtask 0 -> 1)
+        - split2: first time first arm moves again after split1 (subtask 1 -> 2)
         - which_arm_first: "left" or "right"
     """
     left_vel, right_vel = _compute_arm_velocities(qpos, left_arm_dim, right_arm_dim)
@@ -201,54 +191,59 @@ def _find_split_points(qpos: np.ndarray, left_arm_dim: int, right_arm_dim: int,
         print(f"  Left vel range: [{left_vel.min():.4f}, {left_vel.max():.4f}]")
         print(f"  Right vel range: [{right_vel.min():.4f}, {right_vel.max():.4f}]")
 
-    # Find activity periods for each arm
-    left_periods = _detect_arm_activity_periods(left_vel, velocity_threshold)
-    right_periods = _detect_arm_activity_periods(right_vel, velocity_threshold)
+    # Find when each arm first moves
+    left_first = _find_first_movement(left_vel, velocity_threshold)
+    right_first = _find_first_movement(right_vel, velocity_threshold)
 
     if verbose:
-        print(f"  Left activity periods: {left_periods}")
-        print(f"  Right activity periods: {right_periods}")
+        print(f"  Left first movement: {left_first}")
+        print(f"  Right first movement: {right_first}")
 
-    # Determine which arm moves first by comparing first activity start times
-    if not left_periods and not right_periods:
+    # Determine which arm moves first
+    if left_first is None and right_first is None:
         return None, None, "none"
 
-    left_first_start = left_periods[0][0] if left_periods else float('inf')
-    right_first_start = right_periods[0][0] if right_periods else float('inf')
-
-    if left_first_start < right_first_start:
+    if left_first is None:
+        first_arm = "right"
+        first_vel = right_vel
+        second_vel = left_vel
+    elif right_first is None:
         first_arm = "left"
-        first_periods = left_periods
-        second_periods = right_periods
+        first_vel = left_vel
+        second_vel = right_vel
+    elif left_first <= right_first:
+        first_arm = "left"
+        first_vel = left_vel
+        second_vel = right_vel
     else:
         first_arm = "right"
-        first_periods = right_periods
-        second_periods = left_periods
+        first_vel = right_vel
+        second_vel = left_vel
 
     if verbose:
         print(f"  First arm to move: {first_arm}")
 
-    # Split 1: End of first arm's first major movement period
-    if not first_periods:
+    # Split 1: First time the SECOND arm moves (end of subtask 0)
+    split1 = _find_first_movement(second_vel, velocity_threshold)
+
+    if split1 is None:
+        if verbose:
+            print(f"  Could not find split1: second arm never moves")
         return None, None, first_arm
 
-    # Find the end of first arm's first activity
-    split1 = first_periods[0][1]
+    if verbose:
+        print(f"  Split 1 (second arm starts): {split1}")
 
-    # Split 2: End of second arm's movement (should be after split1)
-    if not second_periods:
+    # Split 2: First time the FIRST arm moves again, after split1 (end of subtask 1)
+    split2 = _find_first_movement(first_vel, velocity_threshold, start_from=split1)
+
+    if split2 is None:
+        if verbose:
+            print(f"  Could not find split2: first arm doesn't move after split1")
         return split1, None, first_arm
 
-    # Find second arm's activity that starts after or around split1
-    split2 = None
-    for start, end in second_periods:
-        if start >= split1 - 20:  # Allow some overlap
-            split2 = end
-            break
-
-    if split2 is None and second_periods:
-        # Fall back to the end of the last second arm period
-        split2 = second_periods[-1][1]
+    if verbose:
+        print(f"  Split 2 (first arm resumes): {split2}")
 
     return split1, split2, first_arm
 
@@ -440,8 +435,8 @@ def main() -> None:
     parser.add_argument(
         "--velocity-threshold",
         type=float,
-        default=0.01,
-        help="Velocity threshold for detecting arm movement (default: 0.01)",
+        default=0.002,
+        help="Velocity threshold for detecting arm movement (default: 0.002)",
     )
     parser.add_argument(
         "--overlap",
