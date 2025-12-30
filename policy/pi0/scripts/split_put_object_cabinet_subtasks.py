@@ -130,25 +130,19 @@ def _load_instructions(instructions_path: Path) -> List[str]:
     return instr
 
 
-def _extract_object_description(instructions: List[str]) -> str:
+def _extract_all_object_descriptions(instructions: List[str]) -> List[str]:
     """
-    Extract the full object description from the original instructions.
+    Extract ALL unique object descriptions from the original instructions.
 
     Based on description/task_instruction/put_object_cabinet.json, the prompts use:
     - {A} = object description (e.g., "rubikscube featuring white, green, orange tiles")
     - {B} = cabinet description (e.g., "the gray and wood cabinet")
     - {a} = arm that opens the drawer
 
-    Common patterns:
-    - "place {A} inside" -> extract what's being placed
-    - "put {A} into" -> extract what's being put
-    - "set {A} inside" -> extract what's being set
-    - "drop {A} into" -> extract what's being dropped
-    - "stick {A} inside" -> extract what's being stuck
-    - "move {A} into" -> extract what's being moved
-    - "transfer {A} into" -> extract what's being transferred
+    Each episode has ~100 instructions with different object descriptions for the same object.
+    We extract all unique descriptions to use in subtask prompts.
 
-    Returns the extracted object description or "object" if not found.
+    Returns list of unique object descriptions found.
     """
     # Patterns that capture the object being placed into the drawer
     # The object appears BEFORE "inside/into/in" and AFTER action verbs
@@ -161,6 +155,8 @@ def _extract_object_description(instructions: List[str]) -> str:
         r'(?:place|put|set|drop|stick|move|transfer|insert)\s+(.+?)\s+into\s+(?:the\s+drawer|it)',
     ]
 
+    found_objects = set()
+
     for instr in instructions:
         for pattern in patterns:
             match = re.search(pattern, instr, re.IGNORECASE)
@@ -168,29 +164,44 @@ def _extract_object_description(instructions: List[str]) -> str:
                 obj_desc = match.group(1).strip()
                 # Clean up: remove trailing punctuation
                 obj_desc = re.sub(r'[.,;:!?]+$', '', obj_desc)
-                # Don't return if it's too short or just "it"
+                # Don't add if it's too short or just "it"
                 if len(obj_desc) > 2 and obj_desc.lower() != "it":
-                    return obj_desc
+                    found_objects.add(obj_desc)
+                break  # Only take first match per instruction
 
-    # Fallback: try to find known objects
-    for instr in instructions:
-        instr_lower = instr.lower()
-        for obj in KNOWN_OBJECTS:
-            if obj in instr_lower:
-                # Return the canonical name
-                if obj in ["rubik's cube", "rubikscube"]:
-                    return "rubikscube"
-                if obj in ["toy car", "toycar"]:
-                    return "toycar"
-                if obj in ["playing cards", "playingcards"]:
-                    return "playingcards"
-                if obj in ["tea box", "tea-box"]:
-                    return "tea-box"
-                if obj in ["coffee box", "coffee-box"]:
-                    return "coffee-box"
-                return obj
+    # Convert to sorted list for consistency
+    result = sorted(list(found_objects))
 
-    return "object"
+    # Fallback if no objects found
+    if not result:
+        for instr in instructions:
+            instr_lower = instr.lower()
+            for obj in KNOWN_OBJECTS:
+                if obj in instr_lower:
+                    # Return the canonical name
+                    if obj in ["rubik's cube", "rubikscube"]:
+                        result.append("rubikscube")
+                    elif obj in ["toy car", "toycar"]:
+                        result.append("toycar")
+                    elif obj in ["playing cards", "playingcards"]:
+                        result.append("playingcards")
+                    elif obj in ["tea box", "tea-box"]:
+                        result.append("tea-box")
+                    elif obj in ["coffee box", "coffee-box"]:
+                        result.append("coffee-box")
+                    else:
+                        result.append(obj)
+                    break
+            if result:
+                break
+
+    return result if result else ["object"]
+
+
+def _extract_object_description(instructions: List[str]) -> str:
+    """Extract a single (first) object description for backward compatibility."""
+    descs = _extract_all_object_descriptions(instructions)
+    return descs[0] if descs else "object"
 
 
 def _save_instructions(out_path: Path, instructions: List[str]) -> None:
@@ -321,29 +332,58 @@ def _find_split_points(qpos: np.ndarray, left_arm_dim: int, right_arm_dim: int,
     return split1, split2, first_arm
 
 
-def _default_subtask_instructions(subtask_idx: int, first_arm: str = "left", object_name: str = "object") -> List[str]:
-    """Generate subtask-specific instructions based on the rubric."""
+def _default_subtask_instructions(subtask_idx: int, first_arm: str = "left", object_descriptions: List[str] = None) -> List[str]:
+    """
+    Generate subtask-specific instructions based on the rubric.
+
+    Uses all available object descriptions to generate varied instructions.
+    """
+    if object_descriptions is None:
+        object_descriptions = ["object"]
+
     second_arm = "right" if first_arm == "left" else "left"
 
+    instructions = []
+
     if subtask_idx == 0:
-        return [
-            f"Use your {first_arm} arm to grasp the {object_name} on the table.",
-            f"Pick up the {object_name} with your {first_arm} arm.",
-            f"Grasp the {object_name} using the {first_arm} arm.",
+        # Subtask 0: Grasp the object
+        templates = [
+            "Use your {arm} arm to grasp the {obj} on the table.",
+            "Pick up the {obj} with your {arm} arm.",
+            "Grasp the {obj} using the {arm} arm.",
+            "With your {arm} arm, pick up the {obj}.",
+            "Use the {arm} arm to grasp the {obj}.",
         ]
-    if subtask_idx == 1:
-        return [
+        for obj in object_descriptions:
+            for template in templates:
+                instructions.append(template.format(arm=first_arm, obj=obj))
+
+    elif subtask_idx == 1:
+        # Subtask 1: Open the drawer (no object in these prompts)
+        instructions = [
             f"Use your {second_arm} arm to open the cabinet drawer.",
             f"Open the drawer of the cabinet with your {second_arm} arm.",
             f"Pull open the cabinet drawer using your {second_arm} arm.",
+            f"With your {second_arm} arm, open the drawer.",
+            f"Use the {second_arm} arm to pull the drawer open.",
         ]
-    if subtask_idx == 2:
-        return [
-            f"Move the {object_name} into the open drawer and release it.",
-            f"Place the {object_name} inside the drawer.",
-            f"Put the {object_name} into the drawer.",
+
+    elif subtask_idx == 2:
+        # Subtask 2: Place object into drawer
+        templates = [
+            "Move the {obj} into the open drawer and release it.",
+            "Place the {obj} inside the drawer.",
+            "Put the {obj} into the drawer.",
+            "Drop the {obj} into the open drawer.",
+            "Transfer the {obj} into the drawer.",
         ]
-    raise ValueError(f"Invalid subtask_idx: {subtask_idx}")
+        for obj in object_descriptions:
+            for template in templates:
+                instructions.append(template.format(obj=obj))
+    else:
+        raise ValueError(f"Invalid subtask_idx: {subtask_idx}")
+
+    return instructions
 
 
 def _slice_arrays(arrays: dict, start: int, end: int) -> dict:
@@ -371,9 +411,9 @@ def analyze_episode(ep: EpisodePaths, velocity_threshold: float = 0.01, verbose:
         velocity_threshold=velocity_threshold, verbose=verbose
     )
 
-    # Extract object description from instructions
+    # Extract ALL object descriptions from instructions
     orig_instructions = _load_instructions(ep.instructions_path)
-    object_desc = _extract_object_description(orig_instructions)
+    object_descriptions = _extract_all_object_descriptions(orig_instructions)
 
     return {
         "episode_id": ep.episode_id,
@@ -383,7 +423,7 @@ def analyze_episode(ep: EpisodePaths, velocity_threshold: float = 0.01, verbose:
         "first_arm": first_arm,
         "left_arm_dim": left_arm_dim,
         "right_arm_dim": right_arm_dim,
-        "object_desc": object_desc,
+        "object_descriptions": object_descriptions,
     }
 
 
@@ -582,7 +622,11 @@ def main() -> None:
             print(f"  Total frames: {info['total_frames']}")
             print(f"  First arm: {info['first_arm']}")
             print(f"  Split points: {info['split1']}, {info['split2']}")
-            print(f"  Object: {info['object_desc']}")
+            print(f"  Object descriptions ({len(info['object_descriptions'])}):")
+            for i, desc in enumerate(info['object_descriptions'][:10]):  # Show first 10
+                print(f"    {i+1}. {desc}")
+            if len(info['object_descriptions']) > 10:
+                print(f"    ... and {len(info['object_descriptions']) - 10} more")
 
             if args.generate_videos:
                 video_path = video_out_dir / f"episode_{ep.episode_id}_splits.mp4"
@@ -634,9 +678,9 @@ def main() -> None:
 
         orig_instructions = _load_instructions(ep.instructions_path)
 
-        # Extract object description from original instructions
-        object_name = _extract_object_description(orig_instructions)
-        print(f"  Extracted object: {object_name}")
+        # Extract ALL object descriptions from original instructions
+        object_descriptions = _extract_all_object_descriptions(orig_instructions)
+        print(f"  Extracted {len(object_descriptions)} object descriptions")
 
         for sub_idx, (s, e) in enumerate(segments):
             if args.preserve_episode_ids:
@@ -654,7 +698,7 @@ def main() -> None:
             if args.instructions == "copy":
                 _save_instructions(out_instr, orig_instructions)
             else:
-                _save_instructions(out_instr, _default_subtask_instructions(sub_idx, first_arm, object_name))
+                _save_instructions(out_instr, _default_subtask_instructions(sub_idx, first_arm, object_descriptions))
 
             global_out_idx += 1
 
