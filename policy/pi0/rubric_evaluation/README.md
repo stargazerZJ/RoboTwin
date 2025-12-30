@@ -10,6 +10,7 @@ Features:
 - Supports **rubric hot-reload** with **versioning** and **rollback**.
 - Provides a **web UI** optimized for fast inspection on a 4K monitor.
 - **Task-agnostic**: easily add new tasks by creating a rubric file.
+- **Hierarchical prompting**: supports subtask rubrics for studying decomposed prompting.
 
 ## Quick start (tmux-friendly)
 
@@ -34,7 +35,7 @@ This starts one websocket policy server per GPU using [`policy/pi0/scripts/serve
 ### 2) Start the evaluation manager + web UI
 Run in another tmux window:
 
-**For blocks_ranking_rgb:**
+**For blocks_ranking_rgb (baseline):**
 ```bash
 bash policy/pi0/rubric_evaluation/bin/start_server.sh \
   --task_name blocks_ranking_rgb \
@@ -45,10 +46,11 @@ bash policy/pi0/rubric_evaluation/bin/start_server.sh \
   --gpus all \
   --base_port 8000 \
   --num_episodes 500 \
-  --rollout_workers_per_backend 1
+  --rollout_workers_per_backend 1 \
+  --rubric_variant baseline
 ```
 
-**For put_object_cabinet:**
+**For put_object_cabinet (baseline - flat prompting):**
 ```bash
 bash policy/pi0/rubric_evaluation/bin/start_server.sh \
   --task_name put_object_cabinet \
@@ -59,7 +61,21 @@ bash policy/pi0/rubric_evaluation/bin/start_server.sh \
   --gpus all \
   --base_port 8000 \
   --num_episodes 500 \
-  --rollout_workers_per_backend 1
+  --rubric_variant baseline
+```
+
+**For put_object_cabinet (subtask - hierarchical prompting):**
+```bash
+bash policy/pi0/rubric_evaluation/bin/start_server.sh \
+  --task_name put_object_cabinet \
+  --task_config demo_randomized \
+  --train_config_name pi0_base_aloha_robotwin_lora \
+  --model_name put_object_cabinet_model \
+  --checkpoint_id latest \
+  --gpus all \
+  --base_port 8000 \
+  --num_episodes 500 \
+  --rubric_variant subtask
 ```
 
 Open the UI at: `http://localhost:8899`
@@ -67,8 +83,12 @@ Open the UI at: `http://localhost:8899`
 ### 3) Edit rubric and reload (no backend restart)
 Edit the rubric file for your task:
 
+**Baseline rubrics (flat prompting):**
 - [`policy/pi0/rubric_evaluation/rubrics/blocks_ranking_rgb_rubric.py`](policy/pi0/rubric_evaluation/rubrics/blocks_ranking_rgb_rubric.py:1) - for blocks_ranking_rgb
 - [`policy/pi0/rubric_evaluation/rubrics/put_object_cabinet_rubric.py`](policy/pi0/rubric_evaluation/rubrics/put_object_cabinet_rubric.py:1) - for put_object_cabinet
+
+**Subtask rubrics (hierarchical prompting):**
+- [`policy/pi0/rubric_evaluation/rubrics/put_object_cabinet_subtask_rubric.py`](policy/pi0/rubric_evaluation/rubrics/put_object_cabinet_subtask_rubric.py:1) - hierarchical prompting for put_object_cabinet
 
 Then notify the server to snapshot + reload the rubric (creates a new version folder):
 
@@ -94,9 +114,12 @@ Rollback overwrites the current rubric code with the selected version and evalua
 ## Folder layout
 
 - `bin/` — bash scripts to launch backends, start server, reload, rollback.
-- `rubrics/` — editable rubric files (one per task, named `{task_name}_rubric.py`).
+- `rubrics/` — editable rubric files:
+  - `{task_name}_rubric.py` — baseline rubric (flat prompting)
+  - `{task_name}_subtask_rubric.py` — subtask rubric (hierarchical prompting)
   - `blocks_ranking_rgb_rubric.py` — baseline rubric for blocks ranking task
   - `put_object_cabinet_rubric.py` — baseline rubric for put object in cabinet task
+  - `put_object_cabinet_subtask_rubric.py` — subtask rubric for put object in cabinet task
 - `runs/` — rubric version folders organized by model and task:
   - `{model_name}/{task_name}-{task_config}/{version_id}/`
     - `rubric.py` (snapshotted rubric code)
@@ -141,7 +164,62 @@ To add evaluation support for a new task:
    - `done` should match the task's `check_success()` logic
    - `debug` dict is displayed in the web UI overlay
 
-4. **Start the server** with `--task_name your_task_name`
+4. **Start the server** with `--task_name your_task_name --rubric_variant baseline`
+
+---
+
+## Hierarchical Subtask Rubrics
+
+Subtask rubrics implement **hierarchical prompting** for studying whether decomposed instructions improve VLA performance.
+
+### Motivation
+
+VLA models trained on successful demonstrations cannot recover from failures. By decomposing a complex task into focused subtasks, we can:
+- Provide more specific guidance at each stage
+- Study which subtasks are most challenging
+- Compare flat vs hierarchical prompting strategies
+
+### put_object_cabinet Subtask Decomposition
+
+The `put_object_cabinet` task is decomposed into three subtasks:
+
+| Subtask | Description | Completion Condition | Prompt Focus |
+|---------|-------------|---------------------|--------------|
+| 0 | Grasp the object | Gripper near object AND closed | Object name + arm to use |
+| 1 | Open the drawer | Drawer joint position > threshold | Arm to open drawer |
+| 2 | Place object in drawer | Object at target + gripper open | Move object to drawer |
+
+### Creating a Subtask Rubric
+
+1. **Create** `rubrics/{task_name}_subtask_rubric.py`
+
+2. **Implement state machine** in `RubricState`:
+   ```python
+   @dataclass
+   class RubricState:
+       subtask: int = 0  # Current subtask index
+       prompt: str = ""
+       initialized: bool = False
+   ```
+
+3. **Define subtask-specific prompts**:
+   ```python
+   SUBTASK_0_PROMPTS = ["Use your {arm} arm to grasp the {object}."]
+   SUBTASK_1_PROMPTS = ["Open the drawer with your {arm} arm."]
+   SUBTASK_2_PROMPTS = ["Place the {object} in the drawer."]
+   ```
+
+4. **Implement transitions** in `step()`:
+   ```python
+   if state.subtask == 0 and subtask_0_complete:
+       state.subtask = 1
+       state.prompt = generate_prompt(state, 1)
+   elif state.subtask == 1 and subtask_1_complete:
+       state.subtask = 2
+       state.prompt = generate_prompt(state, 2)
+   ```
+
+5. **Start the server** with `--rubric_variant subtask`
 
 ---
 
