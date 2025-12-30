@@ -199,7 +199,10 @@ class EvalManager:
         # Use multiprocessing queues for inter-process communication
         # (Threading causes CUDA context conflicts with SAPIEN ray tracing)
         self._mp_ctx = mp.get_context("spawn")  # spawn to avoid CUDA fork issues
-        self._result_q: mp.Queue = self._mp_ctx.Queue()
+        # Use Manager().Queue() for reliable cross-process communication with spawn context
+        # Direct mp.Queue() can fail to share properly between main and spawned processes
+        self._manager = self._mp_ctx.Manager()
+        self._result_q = self._manager.Queue()
         self._processes: list[mp.Process] = []
 
         self._success = 0
