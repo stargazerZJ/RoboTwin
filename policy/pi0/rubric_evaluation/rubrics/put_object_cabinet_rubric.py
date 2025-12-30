@@ -104,27 +104,23 @@ def _load_object_descriptions(model_name: str, model_id: int) -> List[str]:
 
     Returns a list of descriptions (seen + unseen) or a fallback list with the formatted name.
     """
-    # Try to find the description file
-    # First look relative to this file, then relative to workspace root
-    possible_paths = [
-        Path(__file__).parent.parent.parent.parent.parent / "description" / "objects_description" / model_name / f"base{model_id}.json",
-        Path("description") / "objects_description" / model_name / f"base{model_id}.json",
-    ]
+    # Use relative path from CWD (worker sets CWD to repo root)
+    # This is more reliable than __file__ which points to the versioned rubric copy
+    desc_path = Path("description") / "objects_description" / model_name / f"base{model_id}.json"
 
-    for desc_path in possible_paths:
+    try:
         if desc_path.exists():
-            try:
-                with open(desc_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                descriptions = []
-                if "seen" in data and isinstance(data["seen"], list):
-                    descriptions.extend(data["seen"])
-                if "unseen" in data and isinstance(data["unseen"], list):
-                    descriptions.extend(data["unseen"])
-                if descriptions:
-                    return descriptions
-            except Exception:
-                pass
+            with open(desc_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            descriptions = []
+            if "seen" in data and isinstance(data["seen"], list):
+                descriptions.extend([str(d) for d in data["seen"]])
+            if "unseen" in data and isinstance(data["unseen"], list):
+                descriptions.extend([str(d) for d in data["unseen"]])
+            if descriptions:
+                return descriptions
+    except Exception:
+        pass
 
     # Fallback: use formatted model name
     return [_format_object_name(model_name)]
@@ -133,7 +129,8 @@ def _load_object_descriptions(model_name: str, model_id: int) -> List[str]:
 def _get_random_object_description(model_name: str, model_id: int) -> str:
     """Get a random object description for the given model."""
     descriptions = _load_object_descriptions(model_name, model_id)
-    return np.random.choice(descriptions)
+    # np.random.choice returns numpy.str_, convert to native Python str
+    return str(np.random.choice(descriptions))
 
 
 def _get_object_xyz(env: Any) -> np.ndarray:
@@ -228,8 +225,8 @@ def step(env: Any, observation: Dict[str, Any], state: RubricState, cfg: RubricC
     # Initialize state on first step (when env has object info)
     if not state.initialized:
         # Get object model info
-        state.object_model_name = getattr(env, "selected_modelname", "object")
-        state.object_model_id = getattr(env, "selected_model_id", 0)
+        state.object_model_name = str(getattr(env, "selected_modelname", "object"))
+        state.object_model_id = int(getattr(env, "selected_model_id", 0))
 
         # Get a descriptive object name (same across all subtasks in this episode)
         state.object_name = _get_random_object_description(
@@ -315,9 +312,9 @@ def step(env: Any, observation: Dict[str, Any], state: RubricState, cfg: RubricC
         "subtask_2_complete": bool(subtask_2_complete),
 
         # General info
-        "object_name": state.object_name,
-        "object_model_name": state.object_model_name,
-        "object_model_id": state.object_model_id,
+        "object_name": str(state.object_name),
+        "object_model_name": str(state.object_model_name),
+        "object_model_id": int(state.object_model_id),
         "eps_xy": list(cfg.eps_xy),
         "z_range": [float(cfg.z_min), float(cfg.z_max)],
     }
