@@ -39,12 +39,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple, Optional
 
 import h5py
 import numpy as np
+
+
+# Known object names from put_object_cabinet task (from envs/put_object_cabinet.py)
+KNOWN_OBJECTS = [
+    "mouse", "stapler", "toycar", "rubikscube", "bread",
+    "phone", "playingcards", "tea-box", "coffee-box", "soap",
+    # Also include common variants
+    "rubik's cube", "toy car", "playing cards", "tea box", "coffee box",
+]
 
 
 @dataclass(frozen=True)
@@ -118,6 +128,69 @@ def _load_instructions(instructions_path: Path) -> List[str]:
     if not isinstance(instr, list) or not all(isinstance(x, str) for x in instr):
         raise ValueError(f"Invalid instructions.json schema: {instructions_path}")
     return instr
+
+
+def _extract_object_description(instructions: List[str]) -> str:
+    """
+    Extract the full object description from the original instructions.
+
+    Based on description/task_instruction/put_object_cabinet.json, the prompts use:
+    - {A} = object description (e.g., "rubikscube featuring white, green, orange tiles")
+    - {B} = cabinet description (e.g., "the gray and wood cabinet")
+    - {a} = arm that opens the drawer
+
+    Common patterns:
+    - "place {A} inside" -> extract what's being placed
+    - "put {A} into" -> extract what's being put
+    - "set {A} inside" -> extract what's being set
+    - "drop {A} into" -> extract what's being dropped
+    - "stick {A} inside" -> extract what's being stuck
+    - "move {A} into" -> extract what's being moved
+    - "transfer {A} into" -> extract what's being transferred
+
+    Returns the extracted object description or "object" if not found.
+    """
+    # Patterns that capture the object being placed into the drawer
+    # The object appears BEFORE "inside/into/in" and AFTER action verbs
+    patterns = [
+        # "place/put/set/drop/stick/move/transfer the X inside/into/in"
+        r'(?:place|put|set|drop|stick|move|transfer|insert)\s+(?:the\s+)?(.+?)\s+(?:inside|into|in\s+)',
+        # "the X inside" at end of sentence
+        r'(?:place|put|set|drop|stick|move|transfer|insert)\s+(?:the\s+)?(.+?)\s+inside\s*[.,]?$',
+        # "{A} into {B}'s drawer" pattern
+        r'(?:place|put|set|drop|stick|move|transfer|insert)\s+(.+?)\s+into\s+(?:the\s+drawer|it)',
+    ]
+
+    for instr in instructions:
+        for pattern in patterns:
+            match = re.search(pattern, instr, re.IGNORECASE)
+            if match:
+                obj_desc = match.group(1).strip()
+                # Clean up: remove trailing punctuation
+                obj_desc = re.sub(r'[.,;:!?]+$', '', obj_desc)
+                # Don't return if it's too short or just "it"
+                if len(obj_desc) > 2 and obj_desc.lower() != "it":
+                    return obj_desc
+
+    # Fallback: try to find known objects
+    for instr in instructions:
+        instr_lower = instr.lower()
+        for obj in KNOWN_OBJECTS:
+            if obj in instr_lower:
+                # Return the canonical name
+                if obj in ["rubik's cube", "rubikscube"]:
+                    return "rubikscube"
+                if obj in ["toy car", "toycar"]:
+                    return "toycar"
+                if obj in ["playing cards", "playingcards"]:
+                    return "playingcards"
+                if obj in ["tea box", "tea-box"]:
+                    return "tea-box"
+                if obj in ["coffee box", "coffee-box"]:
+                    return "coffee-box"
+                return obj
+
+    return "object"
 
 
 def _save_instructions(out_path: Path, instructions: List[str]) -> None:
@@ -298,6 +371,10 @@ def analyze_episode(ep: EpisodePaths, velocity_threshold: float = 0.01, verbose:
         velocity_threshold=velocity_threshold, verbose=verbose
     )
 
+    # Extract object description from instructions
+    orig_instructions = _load_instructions(ep.instructions_path)
+    object_desc = _extract_object_description(orig_instructions)
+
     return {
         "episode_id": ep.episode_id,
         "total_frames": len(qpos),
@@ -306,6 +383,7 @@ def analyze_episode(ep: EpisodePaths, velocity_threshold: float = 0.01, verbose:
         "first_arm": first_arm,
         "left_arm_dim": left_arm_dim,
         "right_arm_dim": right_arm_dim,
+        "object_desc": object_desc,
     }
 
 
@@ -504,6 +582,7 @@ def main() -> None:
             print(f"  Total frames: {info['total_frames']}")
             print(f"  First arm: {info['first_arm']}")
             print(f"  Split points: {info['split1']}, {info['split2']}")
+            print(f"  Object: {info['object_desc']}")
 
             if args.generate_videos:
                 video_path = video_out_dir / f"episode_{ep.episode_id}_splits.mp4"
@@ -555,6 +634,10 @@ def main() -> None:
 
         orig_instructions = _load_instructions(ep.instructions_path)
 
+        # Extract object description from original instructions
+        object_name = _extract_object_description(orig_instructions)
+        print(f"  Extracted object: {object_name}")
+
         for sub_idx, (s, e) in enumerate(segments):
             if args.preserve_episode_ids:
                 out_ep_name = f"episode_{ep.episode_id}_{sub_idx}"
@@ -571,7 +654,7 @@ def main() -> None:
             if args.instructions == "copy":
                 _save_instructions(out_instr, orig_instructions)
             else:
-                _save_instructions(out_instr, _default_subtask_instructions(sub_idx, first_arm))
+                _save_instructions(out_instr, _default_subtask_instructions(sub_idx, first_arm, object_name))
 
             global_out_idx += 1
 
