@@ -27,6 +27,7 @@ PI0_STEP="50"
 WORKERS_PER_BACKEND="1"
 SERVER_HOST="0.0.0.0"
 SERVER_PORT="8899"
+RUBRIC_VARIANT="baseline"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -43,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     --rollout_workers_per_backend) WORKERS_PER_BACKEND="$2"; shift 2;;
     --server_host) SERVER_HOST="$2"; shift 2;;
     --server_port) SERVER_PORT="$2"; shift 2;;
+    --rubric_variant) RUBRIC_VARIANT="$2"; shift 2;;
     *) echo "Unknown arg: $1"; exit 1;;
   esac
 done
@@ -70,4 +72,5 @@ python -m policy.pi0.rubric_evaluation.server.main \
   --pi0_step "${PI0_STEP}" \
   --rollout_workers_per_backend "${WORKERS_PER_BACKEND}" \
   --server_host "${SERVER_HOST}" \
-  --server_port "${SERVER_PORT}"
+  --server_port "${SERVER_PORT}" \
+  --rubric_variant "${RUBRIC_VARIANT}"

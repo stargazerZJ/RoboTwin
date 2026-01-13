@@ -98,6 +98,64 @@ function videoUrlForEpisode(ep){
   return `${getBaseUrl()}runs/${s.model_name}/${s.task_name}-${s.task_config}/${s.current_version_id}/videos/${name}`;
 }
 
+function attentionBaseUrlForEpisode(ep){
+  const s = state.status;
+  if(!s || !s.current_version_id) return null;
+  return `${getBaseUrl()}runs/${s.model_name}/${s.task_name}-${s.task_config}/${s.current_version_id}/attention/episode_${String(ep.episode_id).padStart(4,"0")}/`;
+}
+
+function generateAttentionUrl(baseUrl, stepIdx) {
+    const name = `step_${String(stepIdx).padStart(4,"0")}.png`;
+    return baseUrl + name;
+}
+
+function updateAttentionMap() {
+    const video = $("video");
+    const img = $("attentionImg");
+    const placeholder = $("attentionPlaceholder");
+    
+    // FPS is hardcoded to 10 in rollout_worker.py
+    const fps = 10;
+    const pi0_step = 50; 
+    const currentStep = Math.floor(video.currentTime * fps);
+    const step = Math.floor(currentStep / pi0_step) * pi0_step;
+    
+    if (state.selectedIdx === -1) return;
+    const ep = state.episodes[state.selectedIdx];
+    const baseUrl = attentionBaseUrlForEpisode(ep);
+    
+    if (!baseUrl) {
+        img.style.display = "none";
+        placeholder.style.display = "block";
+        return;
+    }
+
+    const url = generateAttentionUrl(baseUrl, step);
+    
+    if (img.dataset.src !== url) {
+        img.dataset.src = url;
+        img.src = url;
+        img.style.display = "block";
+        placeholder.style.display = "none";
+        
+        img.onerror = () => {
+            // Fallback: try previous step if we are at the very end
+            // or if the current chunk is missing but previous exists.
+            if (step >= pi0_step) {
+                const prevUrl = generateAttentionUrl(baseUrl, step - pi0_step);
+                // Only fallback once to avoid loop
+                if (img.src !== prevUrl) {
+                    console.log(`Missing attention map for step ${step}, trying fallback to ${step - pi0_step}`);
+                    img.src = prevUrl;
+                    return;
+                }
+            }
+            img.style.display = "none";
+            placeholder.style.display = "block";
+        };
+    }
+}
+
 function renderOverlay(ep){
   const overlay = $("overlay");
   if(!ep){ overlay.textContent = ""; return; }
@@ -141,6 +199,7 @@ function selectEpisode(idx){
   } else {
     $("videoTitle").textContent = "Video";
   }
+  updateAttentionMap();
   renderOverlay(ep);
 }
 
@@ -197,6 +256,7 @@ async function refreshAll(){
 }
 
 function setupControls(){
+  $("video").addEventListener("timeupdate", updateAttentionMap);
   $("btnReload").onclick = async () => {
     await apiPost("/api/reload");
     await refreshAll();

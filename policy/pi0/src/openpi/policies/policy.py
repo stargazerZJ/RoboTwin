@@ -47,9 +47,23 @@ class Policy(BasePolicy):
         inputs = jax.tree.map(lambda x: jnp.asarray(x)[np.newaxis, ...], inputs)
 
         self._rng, sample_rng = jax.random.split(self._rng)
+        # actions, probs = self._sample_actions(sample_rng, _model.Observation.from_dict(inputs), **self._sample_kwargs)
+        ret = self._sample_actions(sample_rng, _model.Observation.from_dict(inputs), **self._sample_kwargs)
+        if isinstance(ret, tuple) and len(ret) == 2:
+            actions, probs = ret
+            if probs is not None:
+                probs = jax.tree.map(lambda x: x.astype(jnp.float32), probs)
+        else:
+            logging.warning(f"Expected 2 return values from sample_actions, got {type(ret)}")
+            if isinstance(ret, tuple):
+                logging.warning(f"Tuple length: {len(ret)}")
+            actions = ret
+            probs = None
+
         outputs = {
             "state": inputs["state"],
-            "actions": self._sample_actions(sample_rng, _model.Observation.from_dict(inputs), **self._sample_kwargs),
+            "actions": actions,
+            "attention": probs,
         }
 
         # Unbatch and convert to np.ndarray.

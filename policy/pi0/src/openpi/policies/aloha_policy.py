@@ -109,7 +109,13 @@ class AlohaOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
         # Only return the first 14 dims.
         actions = np.asarray(data["actions"][:, :14])
-        return {"actions": _encode_actions(actions, adapt_to_pi=self.adapt_to_pi)}
+        result = {"actions": _encode_actions(actions, adapt_to_pi=self.adapt_to_pi)}
+        
+        # Preserve other keys
+        for k, v in data.items():
+            if k != "actions":
+                result[k] = v
+        return result
 
 
 def _joint_flip_mask() -> np.ndarray:

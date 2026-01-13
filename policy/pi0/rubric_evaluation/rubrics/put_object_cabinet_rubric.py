@@ -35,6 +35,21 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 
+# Unseen prompt templates from description/task_instruction/put_object_cabinet.json
+UNSEEN_PROMPT_TEMPLATES = [
+    "Use {a} to open {B}'s drawer and the other arm to place {A} inside.",
+    "Open {B}'s drawer with {a} and use the other arm to put {A} inside.",
+    "Open the drawer of {B} with {a} and place {A} inside using the other arm.",
+    "Use {a} to pull open {B}'s drawer and the other arm to move {A} into it.",
+    "Open {B}'s drawer with {a} and place {A} inside using the other arm.",
+    "Pull out the drawer of {B} and set {A} into it.",
+    "Open the drawer of {B} with {a}, then the other arm places {A} inside.",
+    "Open {B}'s drawer and set {A} inside with the other arm.",
+    "Open {B}'s drawer using {a} and place {A} inside with the other arm.",
+    "Set {A} in the drawer of {B} after opening it with {a}.",
+]
+
+
 # Subtask prompt templates - focused on specific actions
 # These are designed based on observed failure modes in baseline evaluation
 
@@ -75,6 +90,8 @@ class RubricConfig:
     eps_xy: Tuple[float, float] = (0.05, 0.05)
     z_min: float = 0.007
     z_max: float = 0.12
+    
+    rubric_variant: str = "baseline"  # "baseline" or "subtask"
 
 
 @dataclass
@@ -239,9 +256,18 @@ def step(env: Any, observation: Dict[str, Any], state: RubricState, cfg: RubricC
         state.grasp_arm = arm_tag  # Arm on same side as object grasps it
         state.drawer_arm = "right" if arm_tag == "left" else "left"  # Other arm opens drawer
 
-        # Generate initial prompt for subtask 0
-        state.prompt = _generate_prompt(state, 0)
-        state.subtask = 0
+        if cfg.rubric_variant == "baseline":
+            template = str(np.random.choice(UNSEEN_PROMPT_TEMPLATES))
+            # Substitute: {A}=object, {B}=cabinet, {a}=drawer_arm + " arm"
+            prompt = template.replace("{A}", state.object_name)
+            prompt = prompt.replace("{B}", "cabinet")
+            prompt = prompt.replace("{a}", f"{state.drawer_arm} arm")
+            state.prompt = prompt
+        else:
+            # Generate initial prompt for subtask 0
+            state.prompt = _generate_prompt(state, 0)
+            state.subtask = 0
+            
         state.initialized = True
 
     # Get current state observations
@@ -273,12 +299,13 @@ def step(env: Any, observation: Dict[str, Any], state: RubricState, cfg: RubricC
     # State machine transitions
     prev_subtask = state.subtask
 
-    if state.subtask == 0 and subtask_0_complete:
-        state.subtask = 1
-        state.prompt = _generate_prompt(state, 1)
-    elif state.subtask == 1 and subtask_1_complete:
-        state.subtask = 2
-        state.prompt = _generate_prompt(state, 2)
+    if cfg.rubric_variant == "subtask":
+        if state.subtask == 0 and subtask_0_complete:
+            state.subtask = 1
+            state.prompt = _generate_prompt(state, 1)
+        elif state.subtask == 1 and subtask_1_complete:
+            state.subtask = 2
+            state.prompt = _generate_prompt(state, 2)
 
     # Check if fully done
     done = subtask_2_complete

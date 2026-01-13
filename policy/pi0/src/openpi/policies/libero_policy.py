@@ -78,4 +78,10 @@ class LiberoOutputs(transforms.DataTransformFn):
 
     def __call__(self, data: dict) -> dict:
         # Only return the first 7 dims.
-        return {"actions": np.asarray(data["actions"][:, :7])}
+        result = {"actions": np.asarray(data["actions"][:, :7])}
+        
+        # Preserve other keys
+        for k, v in data.items():
+            if k != "actions":
+                result[k] = v
+        return result

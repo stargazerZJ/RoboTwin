@@ -110,4 +110,13 @@ def create_app(*, cfg: EvalConfig, manager: EvalManager) -> FastAPI:
             raise HTTPException(status_code=404, detail="Video not found")
         return FileResponse(str(p), media_type="video/mp4")
 
+    @app.get("/runs/{model_name}/{task_name_config}/{version_id}/attention/{episode_dir}/{step_name}")
+    def serve_attention(model_name: str, task_name_config: str, version_id: str, episode_dir: str, step_name: str):
+        from fastapi.responses import FileResponse
+
+        p = cfg.runs_root / model_name / task_name_config / version_id / "attention" / episode_dir / step_name
+        if not p.exists():
+            raise HTTPException(status_code=404, detail="Attention map not found")
+        return FileResponse(str(p), media_type="image/png")
+
     return app

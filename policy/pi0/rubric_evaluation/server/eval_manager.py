@@ -35,6 +35,7 @@ def _worker_process_main(
     retry_seed_counter: "mp.Value",  # Shared atomic counter for retry seeds
     log_dir: str,
     cwd: str,
+    rubric_variant: str,
 ) -> None:
     """
     Worker process main loop. Runs in a separate process with its own CUDA context.
@@ -82,6 +83,7 @@ def _worker_process_main(
             instruction_type="unseen",
             pi0_step=pi0_step,
             max_steps_fallback=max_steps,
+            rubric_variant=rubric_variant,
         )
         logging.info(f"Worker config created: {worker_cfg}")
 
@@ -291,6 +293,7 @@ class EvalManager:
                             self._retry_seed_counter,  # Shared atomic counter for retry seeds
                             log_dir,  # Fixed log directory at startup
                             cwd,  # Pass working directory for relative path resolution
+                            self._cfg.rubric_variant,
                         ),
                         daemon=True,
                     )

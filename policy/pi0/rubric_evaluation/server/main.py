@@ -26,6 +26,7 @@ def parse_args() -> EvalConfig:
     p.add_argument("--rollout_workers_per_backend", type=int, default=1)
     p.add_argument("--server_host", default="0.0.0.0")
     p.add_argument("--server_port", type=int, default=8899)
+    p.add_argument("--rubric_variant", default="baseline", choices=["baseline", "subtask"])
     args = p.parse_args()
 
     return EvalConfig(
@@ -42,6 +43,7 @@ def parse_args() -> EvalConfig:
         rollout_workers_per_backend=args.rollout_workers_per_backend,
         server_host=args.server_host,
         server_port=args.server_port,
+        rubric_variant=args.rubric_variant,
     )
 
 

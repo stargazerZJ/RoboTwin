@@ -242,7 +242,7 @@ class Attention(nn.Module):
             else:
                 out.append(None)
 
-        return out, (k, v)
+        return out, (k, v), probs
 
 
 @at.typecheck
@@ -299,7 +299,7 @@ class Block(nn.Module):
             pre_attn.append(x)
 
         pre_attn = sharding.activation_sharding_constraint(pre_attn)
-        post_attn, kv_cache = attn(pre_attn, positions, attn_mask, kv_cache)
+        post_attn, kv_cache, probs = attn(pre_attn, positions, attn_mask, kv_cache)
         post_attn = jax.tree.map(lambda x: drop(x, deterministic), post_attn)
         post_attn = sharding.activation_sharding_constraint(post_attn)
         xs = jax.tree.map(lambda x, y: x + y, xs, post_attn)
@@ -323,7 +323,7 @@ class Block(nn.Module):
         xs = jax.tree.map(lambda x, y: x + y, xs, out)
         xs = sharding.activation_sharding_constraint(xs)
 
-        return xs, kv_cache
+        return xs, (kv_cache, probs)
 
 
 KVCache: TypeAlias = tuple[at.Float[at.Array, "l b _t _k _h"], at.Float[at.Array, "l b _t _v _h"]]
@@ -384,15 +384,15 @@ class Module(nn.Module):
         *,
         kv_cache: KVCache | None = None,
         deterministic: bool = True,
-    ) -> tuple[Sequence[at.Float[at.Array, "b _t _d"] | None], KVCache]:
+    ) -> tuple[Sequence[at.Float[at.Array, "b _t _d"] | None], KVCache, at.Float[at.Array, "l b k g t s"]]:
         embedded = jax.tree.map(lambda e: e.astype(self.embed_dtype), embedded)
         mask = jnp.asarray(mask)[:, None, :, :]
 
-        embedded, kv_cache = self.layers(embedded, kv_cache, positions, mask, deterministic)
+        embedded, (kv_cache, probs) = self.layers(embedded, kv_cache, positions, mask, deterministic)
 
         assert all(e.dtype == jnp.dtype(self.embed_dtype) for e in embedded if e is not None)
 
-        return [f(e) if e is not None else e for f, e in zip(self.final_norms, embedded, strict=True)], kv_cache
+        return [f(e) if e is not None else e for f, e in zip(self.final_norms, embedded, strict=True)], kv_cache, probs
 
     def init(self):
         """Convenience method for initializing all parameters, necessary due to the quirks of linen."""

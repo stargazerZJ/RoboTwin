@@ -10,6 +10,9 @@ from typing import Any, Dict, Tuple
 import importlib
 import importlib.util
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 # Reuse existing evaluation utilities / envs
 from envs import CONFIGS_PATH  # type: ignore
@@ -25,6 +28,7 @@ class WorkerConfig:
     instruction_type: str = "unseen"
     pi0_step: int = 50
     max_steps_fallback: int = 500
+    rubric_variant: str = "baseline"
 
 
 def _load_task_args(task_config: str) -> Dict[str, Any]:
@@ -123,6 +127,44 @@ def _to_observation_window(input_rgb_arr: list[np.ndarray], state: np.ndarray, p
     }
 
 
+def _save_attention_plot(data: np.ndarray, path: Path):
+    try:
+        if data.dtype == 'bfloat16':
+            data = data.astype(np.float32)
+        if data.shape[0] == 1:
+            data = np.squeeze(data, axis=0)
+        
+        # Aggregate to 2D
+        while data.ndim > 2:
+            data = np.mean(data, axis=0)
+
+        # Assumptions for PaliGemma/Pi0:
+        # 3 images (224x224) -> 256 tokens each = 768 tokens total
+        # followed by text prompt tokens.
+        # Check if shape matches this expectation
+        num_keys = data.shape[1]
+        
+        plt.figure(figsize=(10, 6))
+        plt.imshow(data, aspect='auto', cmap='viridis', interpolation='nearest')
+        
+        # Draw separator if realistic
+        if num_keys > 768:
+            plt.axvline(x=768, color='red', linestyle='--', linewidth=1, label='Image/Text Boundary')
+            # Add text labels if space permits
+            if num_keys < 1024: # arbitrary cutoff to avoid clutter
+                plt.text(384, -2, 'Images', ha='center', va='bottom', color='red', fontsize=8)
+                plt.text((768 + num_keys)/2, -2, 'Text', ha='center', va='bottom', color='red', fontsize=8)
+
+        plt.axis('off') # Keep axis off for clean web view, but maybe add small markers?
+        # For now, just the line is good help.
+        
+        plt.tight_layout(pad=0)
+        plt.savefig(path, bbox_inches='tight', pad_inches=0)
+        plt.close()
+    except Exception as e:
+        print(f"Failed to save attention plot: {e}")
+
+
 def _load_rubric_module(rubric_path: Path):
     """
     Load rubric.py from an arbitrary path (versioned folder).
@@ -202,6 +244,18 @@ def run_one_episode(
     rubric_state = rubric.reset()
     rubric_cfg_cls = getattr(rubric, "RubricConfig", None)
     rubric_cfg = rubric_cfg_cls() if rubric_cfg_cls is not None else None
+    
+    if rubric_cfg is not None:
+        # Inject rubric_variant if the rubric config supports it (or dynamically if it allows)
+        # We assume RubricConfig might have this field, or we can set it if it's a standard class.
+        # If it's a frozen dataclass, this might fail unless we pre-configure it.
+        # But RubricConfig in rubric files is usually a Mutable dataclass.
+        try:
+            rubric_cfg.rubric_variant = worker_cfg.rubric_variant
+        except Exception:
+            # If we can't set it (e.g. frozen or slot), we might ignore or log.
+            # But we are designing the rubrics, so we will make sure they have the field.
+            pass
 
     # Create env and args (mostly copied from script/eval_policy.py)
     args = _load_task_args(worker_cfg.task_config)
@@ -252,6 +306,7 @@ def run_one_episode(
     step_count = 0
     subtask_state = 0
     debug_last: Dict[str, Any] = {}
+    prompt = ""
 
     try:
         while env.take_action_cnt < getattr(env, "step_lim", worker_cfg.max_steps_fallback):
@@ -266,7 +321,16 @@ def run_one_episode(
             # Build observation window and query policy once per chunk
             input_rgb_arr, input_state = _encode_obs(observation)
             obs_window = _to_observation_window(input_rgb_arr, input_state, prompt)
-            actions = client.infer(obs_window)["actions"][: worker_cfg.pi0_step]
+            
+            response = client.infer(obs_window)
+            actions = response["actions"][: worker_cfg.pi0_step]
+
+            if "attention" in response and response["attention"] is not None:
+                attention = response["attention"]
+                attention_dir = out_dir / "attention" / f"episode_{episode_id:04d}"
+                attention_dir.mkdir(parents=True, exist_ok=True)
+                np.save(attention_dir / f"step_{step_count:04d}.npy", attention)
+                _save_attention_plot(attention, attention_dir / f"step_{step_count:04d}.png")
 
             for action in actions:
                 env.take_action(action)
@@ -313,6 +377,7 @@ def run_one_episode(
         "steps": int(step_count),
         "subtask_state_final": int(subtask_state),
         "debug_last": debug_last,
+        "prompt": prompt,
         "video_path": str(video_path),
         "backend": {"host": backend_host, "port": int(backend_port)},
         "time_sec": float(t1 - t0),

@@ -1,17 +1,15 @@
 """
-Baseline rubric for blocks_ranking_rgb (no staging).
+Hierarchical subtask rubric for blocks_ranking_rgb.
 
 RUBRIC_SUMMARY (parsed by server; keep this block up to date)
-- Goal: complete blocks_ranking_rgb task (red-left, green-middle, blue-right).
-- NO staging / state machine - randomly samples one prompt per episode.
+- Goal: complete blocks_ranking_rgb task (red-left, green-middle, blue-right) with hierarchical prompting.
+- THREE subtasks with state machine transitions:
+  - Subtask 0: Place Red block
+  - Subtask 1: Place Green block
+  - Subtask 2: Place Blue block
 - Completion condition: all 3 blocks at their targets AND grippers open.
-- Prompting: randomly selects from unseen prompts at reset (like standard eval.sh).
+- Prompting: specific prompts for each subtask.
 - Debug overlay: per-block dist-to-target, at_target flags, gripper open flag.
-
-Notes:
-- This is a baseline rubric for comparison with staged/hierarchical prompting.
-- Uses ground-truth simulator state (block poses + target poses) and robot gripper state.
-- Matches behavior of policy/pi0/eval.sh which uses np.random.choice on unseen prompts.
 """
 
 from __future__ import annotations
@@ -21,6 +19,9 @@ from typing import Any, Dict, Tuple
 
 import numpy as np
 
+
+# Subtask prompt templates - focused on placing each block
+# Order is typically Red (Left) -> Green (Middle) -> Blue (Right)
 
 # Unseen prompt templates from description/task_instruction/blocks_ranking_rgb.json
 # Template variables: {A}=red block, {B}=green block, {C}=blue block
@@ -47,6 +48,27 @@ TEMPLATE_SUBS = {
     "{c}": "right arm",
 }
 
+SUBTASK_0_PROMPTS = [
+    "Place the red block on the leftmost target.",
+    "Move the red block to the left position.",
+    "Put the red block on the left side.",
+    "Arrange the red block to the left starting position.",
+]
+
+SUBTASK_1_PROMPTS = [
+    "Place the green block on the middle target.",
+    "Move the green block to the center position.",
+    "Put the green block in the middle.",
+    "Arrange the green block next to the red block.",
+]
+
+SUBTASK_2_PROMPTS = [
+    "Place the blue block on the rightmost target.",
+    "Move the blue block to the right position.",
+    "Put the blue block on the right side.",
+    "Arrange the blue block next to the green block.",
+]
+
 
 def _substitute_template(template: str) -> str:
     """Substitute template variables with actual values."""
@@ -56,15 +78,28 @@ def _substitute_template(template: str) -> str:
     return result
 
 
+def _generate_prompt(state: RubricState, subtask: int) -> str:
+    """Generate prompt for specified subtask."""
+    if subtask == 0:
+        return str(np.random.choice(SUBTASK_0_PROMPTS))
+    elif subtask == 1:
+        return str(np.random.choice(SUBTASK_1_PROMPTS))
+    else:  # subtask == 2
+        return str(np.random.choice(SUBTASK_2_PROMPTS))
+
+
 @dataclass
 class RubricConfig:
     eps_xy: Tuple[float, float] = (0.03, 0.10)  # (x,y) tolerance to target
+    rubric_variant: str = "baseline"  # "baseline" or "subtask"
 
 
 @dataclass
 class RubricState:
-    """State holds the randomly selected prompt for this episode."""
+    """State machine for subtask progression."""
+    subtask: int = 0  # Current subtask: 0=Red, 1=Green, 2=Blue
     prompt: str = ""
+    initialized: bool = False
 
 
 def _get_block_xy(env: Any, color: str) -> np.ndarray:
@@ -103,25 +138,33 @@ def _both_grippers_open(env: Any) -> bool:
 
 
 def reset() -> RubricState:
-    """Reset rubric state - randomly select a prompt for this episode."""
-    template = np.random.choice(UNSEEN_PROMPT_TEMPLATES)
-    prompt = _substitute_template(template)
-    return RubricState(prompt=prompt)
+    """Reset rubric state - will be fully initialized in first step() call."""
+    return RubricState()
 
 
 def step(env: Any, observation: Dict[str, Any], state: RubricState, cfg: RubricConfig | None = None) -> Dict[str, Any]:
     """
-    Called every simulator step.
+    Called every simulator step. Manages subtask state machine.
 
     Returns:
       {
-        "prompt": str,              # randomly selected prompt (same for entire episode)
-        "subtask_state": int,       # always 0 (no staging)
-        "done": bool,               # all blocks at target AND grippers open
+        "prompt": str,              # subtask-specific focused prompt
+        "subtask_state": int,       # current subtask (0, 1, or 2)
+        "done": bool,               # task fully complete
         "debug": { ... },           # overlay-friendly debug info
       }
     """
     cfg = cfg or RubricConfig()
+
+    # Initialize state on first step
+    if not state.initialized:
+        if cfg.rubric_variant == "baseline":
+            template = np.random.choice(UNSEEN_PROMPT_TEMPLATES)
+            state.prompt = _substitute_template(template)
+        else:
+            state.prompt = _generate_prompt(state, 0)
+            state.subtask = 0
+        state.initialized = True
 
     # Compute per-block distances to targets
     dists = {}
@@ -135,23 +178,51 @@ def step(env: Any, observation: Dict[str, Any], state: RubricState, cfg: RubricC
 
     grippers_open = _both_grippers_open(env)
 
-    # Task is done when ALL blocks are at target AND grippers are open
+    # Subtask completion conditions
+    # Subtask 0: Red block at target
+    subtask_0_complete = at_target["red"]
+    
+    # Subtask 1: Green block at target (and Red still at target, implicitly or explicitly checks?)
+    # We require Red to optionally stay? For strict progress, yes.
+    subtask_1_complete = at_target["green"]
+
+    # Subtask 2: Blue block at target + grippers open
+    subtask_2_complete = at_target["blue"] and grippers_open
+
+    # State machine transitions
+    prev_subtask = state.subtask
+
+    # Only transition if we are in subtask mode
+    if cfg.rubric_variant == "subtask":
+        if state.subtask == 0 and subtask_0_complete:
+            state.subtask = 1
+            state.prompt = _generate_prompt(state, 1)
+        elif state.subtask == 1 and subtask_1_complete:
+            state.subtask = 2
+            state.prompt = _generate_prompt(state, 2)
+
+    # Check if fully done (all conditions + grippers open)
+    # Note: final done check should verify ALL blocks, as per original rubric
     all_at_target = all(at_target.values())
     done = all_at_target and grippers_open
 
     debug = {
-        "subtask_state": 0,  # no staging
-        "focus": None,       # no focus - baseline uses full task prompt
+        "subtask_state": state.subtask,
+        "prev_subtask": prev_subtask,
+        "focus": f"subtask_{state.subtask}",
         "eps_xy": list(cfg.eps_xy),
         "dists_xy": {k: [float(dists[k][0]), float(dists[k][1])] for k in dists},
         "at_target": {k: bool(at_target[k]) for k in at_target},
-        "all_at_target": bool(all_at_target),
         "grippers_open": bool(grippers_open),
+        "subtask_0_complete": bool(subtask_0_complete),
+        "subtask_1_complete": bool(subtask_1_complete),
+        "subtask_2_complete": bool(subtask_2_complete),
+        "all_at_target": bool(all_at_target),
     }
 
     return {
-        "prompt": state.prompt,  # use the prompt selected at reset
-        "subtask_state": 0,  # no staging
+        "prompt": state.prompt,
+        "subtask_state": state.subtask,
         "done": done,
         "debug": debug,
     }

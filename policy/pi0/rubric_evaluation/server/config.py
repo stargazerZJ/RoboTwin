@@ -32,6 +32,9 @@ class EvalConfig:
     server_host: str = "0.0.0.0"
     server_port: int = 8899
 
+    # Rubric settings
+    rubric_variant: str = "baseline"  # "baseline" or "subtask"
+
     # Concurrency
     rollout_workers_per_backend: int = 1  # start with 1; increase if GPU underutilized
 
