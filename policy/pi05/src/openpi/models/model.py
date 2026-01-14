@@ -30,7 +30,7 @@ ArrayT = TypeVar("ArrayT", bound=jax.Array | torch.Tensor | np.ndarray)
 class ModelType(enum.Enum):
     """Supported model types."""
 
-    PI0 = "pi0"
+    PI0 = "pi05"
     PI0_FAST = "pi0_fast"
     PI05 = "pi05"
 
@@ -99,7 +99,7 @@ class Observation(Generic[ArrayT]):
     # Tokenized prompt mask.
     tokenized_prompt_mask: at.Bool[ArrayT, "*b l"] | None = None
 
-    # pi0-fast model specific fields.
+    # pi05-fast model specific fields.
 
     # Token auto-regressive mask (for FAST autoregressive model).
     token_ar_mask: at.Int[ArrayT, "*b l"] | None = None

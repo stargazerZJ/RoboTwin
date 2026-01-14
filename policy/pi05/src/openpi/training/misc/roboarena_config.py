@@ -99,7 +99,7 @@ def get_roboarena_configs():
             ),
         ),
         TrainConfig(
-            # pi0-style diffusion / flow VLA, trained on DROID from PaliGemma.
+            # pi05-style diffusion / flow VLA, trained on DROID from PaliGemma.
             name="paligemma_diffusion_droid",
             model=pi0_config.Pi0Config(action_horizon=10, action_dim=8),
             data=SimpleDataConfig(

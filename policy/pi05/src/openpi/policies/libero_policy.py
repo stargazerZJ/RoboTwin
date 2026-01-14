@@ -64,7 +64,7 @@ class LiberoInputs(transforms.DataTransformFn):
             "image_mask": {
                 "base_0_rgb": np.True_,
                 "left_wrist_0_rgb": np.True_,
-                # We only mask padding images for pi0 model, not pi0-FAST. Do not change this for your own dataset.
+                # We only mask padding images for pi05 model, not pi05-FAST. Do not change this for your own dataset.
                 "right_wrist_0_rgb": np.True_ if self.model_type == _model.ModelType.PI0_FAST else np.False_,
             },
         }
@@ -97,4 +97,10 @@ class LiberoOutputs(transforms.DataTransformFn):
         # dimension, we need to now parse out the correct number of actions in the return dict.
         # For Libero, we only return the first 7 actions (since the rest is padding).
         # For your own dataset, replace `7` with the action dimension of your dataset.
-        return {"actions": np.asarray(data["actions"][:, :7])}
+        result = {"actions": np.asarray(data["actions"][:, :7])}
+        
+        # Preserve other keys
+        for k, v in data.items():
+            if k != "actions":
+                result[k] = v
+        return result

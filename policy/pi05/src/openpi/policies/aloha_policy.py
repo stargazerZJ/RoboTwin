@@ -98,7 +98,13 @@ class AlohaOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
         # Only return the first 14 dims.
         actions = np.asarray(data["actions"][:, :14])
-        return {"actions": _encode_actions(actions, adapt_to_pi=self.adapt_to_pi)}
+        result = {"actions": _encode_actions(actions, adapt_to_pi=self.adapt_to_pi)}
+        
+        # Preserve other keys
+        for k, v in data.items():
+            if k != "actions":
+                result[k] = v
+        return result
 
 
 def _joint_flip_mask() -> np.ndarray:
@@ -116,7 +122,7 @@ def _unnormalize(x, min_val, max_val):
 
 def _gripper_to_angular(value):
     # Aloha transforms the gripper positions into a linear space. The following code
-    # reverses this transformation to be consistent with pi0 which is pretrained in
+    # reverses this transformation to be consistent with pi05 which is pretrained in
     # angular space.
     #
     # These values are coming from the Aloha code:
@@ -131,14 +137,14 @@ def _gripper_to_angular(value):
     # The constants are taken from the Interbotix code.
     value = linear_to_radian(value, arm_length=0.036, horn_radius=0.022)
 
-    # pi0 gripper data is normalized (0, 1) between encoder counts (2405, 3110).
+    # pi05 gripper data is normalized (0, 1) between encoder counts (2405, 3110).
     # There are 4096 total encoder counts and aloha uses a zero of 2048.
     # Converting this to radians means that the normalized inputs are between (0.5476, 1.6296)
     return _normalize(value, min_val=0.5476, max_val=1.6296)
 
 
 def _gripper_from_angular(value):
-    # Convert from the gripper position used by pi0 to the gripper position that is used by Aloha.
+    # Convert from the gripper position used by pi05 to the gripper position that is used by Aloha.
     # Note that the units are still angular but the range is different.
 
     # We do not scale the output since the trossen model predictions are already in radians.

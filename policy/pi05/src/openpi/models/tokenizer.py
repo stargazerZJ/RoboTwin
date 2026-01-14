@@ -141,7 +141,7 @@ class FASTTokenizer:
 
 ###########################################################################
 ## The tokenizers below are used for RoboArena baseline implementations. ##
-## They are *not* used for pi0-style models.                             ##
+## They are *not* used for pi05-style models.                             ##
 ###########################################################################
 
 

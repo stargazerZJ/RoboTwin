@@ -206,7 +206,7 @@ class Pi0(_model.BaseModel):
         ar_mask = jnp.concatenate([prefix_ar_mask, suffix_ar_mask], axis=0)
         attn_mask = make_attn_mask(input_mask, ar_mask)
         positions = jnp.cumsum(input_mask, axis=1) - 1
-        (prefix_out, suffix_out), _ = self.PaliGemma.llm(
+        (prefix_out, suffix_out), _, _ = self.PaliGemma.llm(
             [prefix_tokens, suffix_tokens], mask=attn_mask, positions=positions, adarms_cond=[None, adarms_cond]
         )
         v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
@@ -224,7 +224,7 @@ class Pi0(_model.BaseModel):
     ) -> _model.Actions:
         observation = _model.preprocess_observation(None, observation, train=False)
         # note that we use the convention more common in diffusion literature, where t=1 is noise and t=0 is the target
-        # distribution. yes, this is the opposite of the pi0 paper, and I'm sorry.
+        # distribution. yes, this is the opposite of the pi05 paper, and I'm sorry.
         dt = -1.0 / num_steps
         batch_size = observation.state.shape[0]
         if noise is None:
@@ -234,10 +234,30 @@ class Pi0(_model.BaseModel):
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
-        _, kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
+        _, kv_cache, _ = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
+
+        # Prepare dummy probs for initialization
+        dummy_x_t = noise
+        dummy_time = jnp.ones((batch_size,))
+        suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(observation, dummy_x_t, dummy_time)
+        suffix_attn_mask = make_attn_mask(suffix_mask, suffix_ar_mask)
+        prefix_attn_mask_expanded = einops.repeat(prefix_mask, "b p -> b s p", s=suffix_tokens.shape[1])
+        full_attn_mask = jnp.concatenate([prefix_attn_mask_expanded, suffix_attn_mask], axis=-1)
+        positions_suffix = jnp.sum(prefix_mask, axis=-1)[:, None] + jnp.cumsum(suffix_mask, axis=-1) - 1
+
+        def get_probs_shape():
+             _, _, probs = self.PaliGemma.llm([None, suffix_tokens],
+                                             mask=full_attn_mask,
+                                             positions=positions_suffix,
+                                             kv_cache=kv_cache,
+                                             adarms_cond=[None, adarms_cond])
+             return probs
+
+        probs_shape = jax.eval_shape(get_probs_shape)
+        initial_probs = jax.tree.map(lambda x: jnp.zeros(x.shape, x.dtype), probs_shape)
 
         def step(carry):
-            x_t, time = carry
+            x_t, time, _ = carry
             suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
                 observation, x_t, jnp.broadcast_to(time, batch_size)
             )
@@ -258,7 +278,7 @@ class Pi0(_model.BaseModel):
             # `positions` is shape (b, suffix_len) indicating the positions of the suffix tokens
             positions = jnp.sum(prefix_mask, axis=-1)[:, None] + jnp.cumsum(suffix_mask, axis=-1) - 1
 
-            (prefix_out, suffix_out), _ = self.PaliGemma.llm(
+            (prefix_out, suffix_out), _, probs = self.PaliGemma.llm(
                 [None, suffix_tokens],
                 mask=full_attn_mask,
                 positions=positions,
@@ -268,12 +288,12 @@ class Pi0(_model.BaseModel):
             assert prefix_out is None
             v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
-            return x_t + dt * v_t, time + dt
+            return x_t + dt * v_t, time + dt, probs
 
         def cond(carry):
-            x_t, time = carry
+            x_t, time, _ = carry
             # robust to floating-point error
             return time >= -dt / 2
 
-        x_0, _ = jax.lax.while_loop(cond, step, (noise, 1.0))
-        return x_0
+        x_0, _, final_probs = jax.lax.while_loop(cond, step, (noise, 1.0, initial_probs))
+        return x_0, final_probs

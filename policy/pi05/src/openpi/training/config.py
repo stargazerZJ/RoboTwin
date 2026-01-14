@@ -85,6 +85,8 @@ class DataConfig:
     # sequence is defined by the `action_horizon` field in the model config. This should be adjusted if your
     # LeRobot dataset is using different keys to represent the action.
     action_sequence_keys: Sequence[str] = ("actions",)
+    
+    local_files_only: bool = False
 
     # If true, will use the LeRobot dataset task to define the prompt.
     prompt_from_task: bool = False
@@ -104,7 +106,7 @@ class GroupFactory(Protocol):
 
 @dataclasses.dataclass(frozen=True)
 class ModelTransformFactory(GroupFactory):
-    """Creates model transforms for standard pi0 models."""
+    """Creates model transforms for standard pi05 models."""
 
     # If provided, will determine the default prompt that be used by the model.
     default_prompt: str | None = None
@@ -322,7 +324,7 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
             outputs=[libero_policy.LiberoOutputs()],
         )
 
-        # One additional data transform: pi0 models are trained on delta actions (relative to the first
+        # One additional data transform: pi05 models are trained on delta actions (relative to the first
         # state in each action chunk). IF your data has ``absolute`` actions (e.g. target joint angles)
         # you can uncomment the following line to convert the actions to delta actions. The only exception
         # is for the gripper actions which are always absolute.
@@ -557,7 +559,7 @@ _CONFIGS = [
         name="pi05_aloha_full_base",
         model=pi0_config.Pi0Config(pi05=True),
         data=LeRobotAlohaDataConfig(
-            repo_id="your_repo_id",
+            repo_id="blocks_ranking_randomized_repo",
             repack_transforms=_transforms.Group(inputs=[
                 _transforms.RepackTransform({
                     "images": {
