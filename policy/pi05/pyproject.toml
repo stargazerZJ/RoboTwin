@@ -50,6 +50,8 @@ dependencies = [
     "openai",
     "huggingface_hub",
     "ffmpeg",
+    "uvicorn>=0.40.0",
+    "fastapi>=0.127.1",
 ]
 
 

@@ -51,6 +51,10 @@ class Args:
     # Record the policy's behavior for debugging.
     record: bool = False
 
+    # Override the dataset repo_id for loading normalization stats. Useful when using different datasets
+    # with the same model configuration without modifying code.
+    robotwin_repo_id: str | None = None
+
     # Specifies how to load the policy. If not provided, the default policy for the environment will be used.
     policy: Checkpoint | Default = dataclasses.field(default_factory=Default)
 
@@ -95,6 +99,7 @@ def create_policy(args: Args) -> _policy.Policy:
                 _config.get_config(args.policy.config),
                 args.policy.dir,
                 default_prompt=args.default_prompt,
+                robotwin_repo_id=args.robotwin_repo_id,
             )
         case Default():
             return create_default_policy(args.env, default_prompt=args.default_prompt)

@@ -89,27 +89,22 @@ class Policy(BasePolicy):
 
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
-        # actions, probs = self._sample_actions(sample_rng, _model.Observation.from_dict(inputs), **self._sample_kwargs)
-        # ret = self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs)
-        # if isinstance(ret, tuple) and len(ret) == 2:
-        #     actions, probs = ret
-        #     if probs is not None:
-        #         probs = jax.tree.map(lambda x: x.astype(jnp.float32), probs)
-        # else:
-        #     logging.warning(f"Expected 2 return values from sample_actions, got {type(ret)}")
-        #     if isinstance(ret, tuple):
-        #         logging.warning(f"Tuple length: {len(ret)}")
-        #     actions = ret
-        #     probs = None
+        ret = self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+        if isinstance(ret, tuple) and len(ret) == 2:
+            actions, probs = ret
+            if probs is not None:
+                probs = jax.tree.map(lambda x: x.astype(jnp.float32), probs)
+        else:
+            logging.warning(f"Expected 2 return values from sample_actions, got {type(ret)}")
+            if isinstance(ret, tuple):
+                logging.warning(f"Tuple length: {len(ret)}")
+            actions = ret
+            probs = None
 
-        # outputs = {
-        #     "state": inputs["state"],
-        #     "actions": actions,
-        #     "attention": probs,
-        # }
         outputs = {
             "state": inputs["state"],
-            "actions": self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs),
+            "actions": actions,
+            "attention": probs,
         }
         model_time = time.monotonic() - start_time
         if self._is_pytorch_model:

@@ -30,7 +30,7 @@ ArrayT = TypeVar("ArrayT", bound=jax.Array | torch.Tensor | np.ndarray)
 class ModelType(enum.Enum):
     """Supported model types."""
 
-    PI0 = "pi05"
+    PI0 = "pi0"
     PI0_FAST = "pi0_fast"
     PI05 = "pi05"
 

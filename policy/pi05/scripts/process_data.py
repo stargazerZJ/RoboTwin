@@ -1,5 +1,4 @@
 import sys
-
 import os
 import h5py
 import numpy as np
@@ -7,6 +6,7 @@ import pickle
 import cv2
 import argparse
 import yaml, json
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
 def load_hdf5(dataset_path):
@@ -51,33 +51,38 @@ def get_task_config(task_name):
     return args
 
 
-def data_transform(path, episode_num, save_path):
-    begin = 0
-    floders = os.listdir(path)
-    # assert episode_num <= len(floders), "data num not enough"
+def process_single_episode(args):
+    """Process a single episode - designed for parallel execution"""
+    path, save_path, i, output_idx = args
 
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
-
-    for i in range(episode_num):
+    try:
+        # Check if hdf5 file exists first
+        hdf5_input_path = os.path.join(path, "data", f"episode{i}.hdf5")
+        if not os.path.isfile(hdf5_input_path):
+            return (i, output_idx, False, f"HDF5 file not found: episode{i}.hdf5", True)  # True = skip
 
         desc_type = "seen"
         instruction_data_path = os.path.join(path, "instructions", f"episode{i}.json")
+        if not os.path.isfile(instruction_data_path):
+            return (i, output_idx, False, f"Instruction file not found: episode{i}.json", True)  # True = skip
+
         with open(instruction_data_path, "r") as f_instr:
             instruction_dict = json.load(f_instr)
         instructions = instruction_dict[desc_type]
         save_instructions_json = {"instructions": instructions}
 
-        os.makedirs(os.path.join(save_path, f"episode_{i}"), exist_ok=True)
+        os.makedirs(os.path.join(save_path, f"episode_{output_idx}"), exist_ok=True)
 
         with open(
-                os.path.join(os.path.join(save_path, f"episode_{i}"), "instructions.json"),
+                os.path.join(os.path.join(save_path, f"episode_{output_idx}"), "instructions.json"),
                 "w",
         ) as f:
             json.dump(save_instructions_json, f, indent=2)
 
-        left_gripper_all, left_arm_all, right_gripper_all, right_arm_all, image_dict = (load_hdf5(
-            os.path.join(path, "data", f"episode{i}.hdf5")))
+        left_gripper_all, left_arm_all, right_gripper_all, right_arm_all, image_dict = (
+            load_hdf5(hdf5_input_path)
+        )
+
         qpos = []
         actions = []
         cam_high = []
@@ -86,9 +91,7 @@ def data_transform(path, episode_num, save_path):
         left_arm_dim = []
         right_arm_dim = []
 
-        last_state = None
         for j in range(0, left_gripper_all.shape[0]):
-
             left_gripper, left_arm, right_gripper, right_arm = (
                 left_gripper_all[j],
                 left_arm_all[j],
@@ -96,8 +99,9 @@ def data_transform(path, episode_num, save_path):
                 right_arm_all[j],
             )
 
-            state = np.array(left_arm.tolist() + [left_gripper] + right_arm.tolist() + [right_gripper])  # joints angle
-
+            state = np.array(
+                left_arm.tolist() + [left_gripper] + right_arm.tolist() + [right_gripper]
+            )
             state = state.astype(np.float32)
 
             if j != left_gripper_all.shape[0] - 1:
@@ -124,7 +128,7 @@ def data_transform(path, episode_num, save_path):
                 left_arm_dim.append(left_arm.shape[0])
                 right_arm_dim.append(right_arm.shape[0])
 
-        hdf5path = os.path.join(save_path, f"episode_{i}/episode_{i}.hdf5")
+        hdf5path = os.path.join(save_path, f"episode_{output_idx}/episode_{output_idx}.hdf5")
 
         with h5py.File(hdf5path, "w") as f:
             f.create_dataset("action", data=np.array(actions))
@@ -140,10 +144,64 @@ def data_transform(path, episode_num, save_path):
             image.create_dataset("cam_right_wrist", data=cam_right_wrist_enc, dtype=f"S{len_right}")
             image.create_dataset("cam_left_wrist", data=cam_left_wrist_enc, dtype=f"S{len_left}")
 
-        begin += 1
-        print(f"proccess {i} success!")
+        return (i, output_idx, True, None, False)  # False = not skipped
 
-    return begin
+    except Exception as e:
+        return (i, output_idx, False, str(e), False)  # False = not skipped (error)
+
+
+def data_transform(path, episode_num, save_path, num_workers=16):
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+
+    # First pass: check which episodes exist and assign continuous output indices
+    print("Scanning for existing episodes...")
+    existing_episodes = []
+    for i in range(episode_num):
+        hdf5_path = os.path.join(path, "data", f"episode{i}.hdf5")
+        if os.path.isfile(hdf5_path):
+            existing_episodes.append(i)
+        else:
+            print(f"  Skipping episode {i} (HDF5 file not found)")
+
+    print(f"Found {len(existing_episodes)} existing episodes out of {episode_num} requested")
+
+    # Prepare arguments with continuous output indices
+    args_list = [(path, save_path, src_idx, out_idx) for out_idx, src_idx in enumerate(existing_episodes)]
+
+    completed = 0
+    failed = 0
+    skipped = 0
+    total = len(args_list)
+
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        # Submit all tasks
+        future_to_episode = {
+            executor.submit(process_single_episode, args): (args[2], args[3])  # (src_idx, out_idx)
+            for args in args_list
+        }
+
+        # Process results as they complete
+        for future in as_completed(future_to_episode):
+            src_idx, out_idx = future_to_episode[future]
+            try:
+                i, output_idx, success, error, is_skip = future.result()
+                if is_skip:
+                    skipped += 1
+                    print(f"process src={i} skipped: {error}")
+                elif success:
+                    completed += 1
+                    print(f"process src={i} -> out={output_idx} success! ({completed}/{total})")
+                else:
+                    failed += 1
+                    print(f"process src={i} -> out={output_idx} failed: {error}")
+            except Exception as e:
+                failed += 1
+                print(f"process src={src_idx} -> out={out_idx} raised exception: {e}")
+
+    print(f"\nCompleted: {completed}, Failed: {failed}, Skipped: {skipped}")
+    print(f"Output episodes: 0 to {completed - 1} (continuous)")
+    return completed
 
 
 if __name__ == "__main__":
@@ -161,20 +219,28 @@ if __name__ == "__main__":
         default=50,
         help="Number of episodes to process (e.g., 50)",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=16,
+        help="Number of parallel workers (default: 16)",
+    )
     args = parser.parse_args()
 
     task_name = args.task_name
     setting = args.setting
     expert_data_num = args.expert_data_num
+    num_workers = args.workers
 
     load_dir = os.path.join("../../data", str(task_name), str(setting))
 
-    begin = 0
-    print(f'read data from path:{os.path.join("data", load_dir)}')
+    print(f'Read data from path: {os.path.join("data", load_dir)}')
+    print(f'Using {num_workers} workers')
 
     target_dir = f"processed_data/{task_name}-{setting}-{expert_data_num}"
-    begin = data_transform(
+    completed = data_transform(
         load_dir,
         expert_data_num,
         target_dir,
+        num_workers=num_workers,
     )
