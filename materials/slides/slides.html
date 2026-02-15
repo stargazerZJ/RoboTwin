@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hierarchical VLA with Subtask Decomposition & Finetuning</title>
+
+  <!-- Reveal.js (CDN). If you need offline, download reveal.js and replace these links. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/theme/white.css" id="theme">
+
+  <style>
+    :root{
+      --fg:#111;
+      --muted:#555;
+      --accent:#0b57d0;
+      --good:#137333;
+      --bad:#b3261e;
+      --hl:#fff3bf;
+    }
+    .reveal { color: var(--fg); }
+    .reveal h1, .reveal h2, .reveal h3, .reveal h4 {
+      text-transform: none;
+      /* font-variant: small-caps; */
+    }
+    .muted { color: var(--muted); }
+    .small { font-size: 0.75em; }
+    .tiny { font-size: 0.62em; }
+    .accent { color: var(--accent); }
+    .good { color: var(--good); font-weight: 700; }
+    .bad  { color: var(--bad); font-weight: 700; }
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background:#f5f5f5; padding:0 0.25em; border-radius:6px; }
+    .cols { display: flex; gap: 24px; align-items: flex-start; }
+    .col { flex: 1; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px 16px; }
+    .pill { display:inline-block; padding: 2px 10px; border-radius: 999px; border: 1px solid #ddd; font-size: 0.75em; margin-right: 6px; }
+    .pill.accent { border-color: #bcd3ff; background:#eef4ff; }
+    .pill.good   { border-color: #bde5c8; background:#eef7f1; color: var(--good); }
+    .pill.bad    { border-color: #f3c2bf; background:#fff1f0; color: var(--bad); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
+    th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
+    th { background: #fafafa; }
+    td.best { background: var(--hl); font-weight: 800; }
+    .footer {
+      position: absolute; left: 22px; right: 22px; bottom: 12px;
+      display: flex; justify-content: space-between; align-items: center;
+      color: #666; font-size: 0.55em;
+    }
+    .imggrid { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .imgcap { font-size: 0.65em; color: #555; margin-top: 6px; }
+    .tight li { margin: 0.25em 0; }
+    .svgwrap { width: 100%; border: 1px solid #e5e5e5; border-radius: 12px; padding: 10px; }
+    .callout { background:#f7faff; border:1px solid #cfe0ff; border-radius: 12px; padding: 12px 14px; }
+    ul.tight { /* padding-left: 1em; */ margin-left: 0; }
+  </style>
+</head>
+
+<body>
+<div class="reveal">
+  <div class="slides">
+
+    <!-- Slide 1 -->
+    <section>
+      <h2 style="line-height:1.15;">
+        Enhancing Long-Horizon Robot Manipulation with<br/>
+        <span class="accent">Hierarchical Task Decomposition</span> & <span class="accent">Subtask Finetuning</span>
+      </h2>
+      <p class="muted" style="margin-top:18px;">
+        CV Course Project (Advisor: Yonglu Li) · RoboTwin · π0
+      </p>
+      <p style="margin-top:18px;">
+        <b>Ji Zeng</b> · Chuxi Wu · Zixi Chen
+      </p>
+
+      <!-- <div class="footer">
+        <span class="muted">12-min oral · “as if top-tier conference”</span>
+        <span class="muted">Press <span class="kbd">S</span> for speaker notes</span>
+      </div> -->
+
+      <aside class="notes">
+        Speaker: Chuxi (0:15). Title + context.
+      </aside>
+    </section>
+
+    <!-- Slide 2 -->
+    <section>
+      <h3>Team & Division of Labor</h3>
+
+      <div class="cols">
+        <div class="col card">
+          <div class="pill accent">Ji Zeng</div>
+          <ul class="tight">
+            <li>Fix training environment issues</li>
+            <li>Ran <b>all final experiments</b></li>
+            <li>Prepared final results & analysis</li>
+          </ul>
+        </div>
+
+        <div class="col card">
+          <div class="pill accent">Chuxi Wu</div>
+          <ul class="tight">
+            <li>Environment setup + early data preparation</li>
+            <li>In sync with hierarchy design & experiments</li>
+            <li>Qualitative behavior analysis</li>
+          </ul>
+        </div>
+
+        <div class="col card">
+          <div class="pill accent">Zixi Chen</div>
+          <ul class="tight">
+            <li>Wrote related work, experiments & analysis sections</li>
+            <li>Helped structure the empirical story</li>
+          </ul>
+        </div>
+      </div>
+
+      <p class="small muted" style="margin-top:10px;">
+        Presentation split: Chuxi (1–6) · Zixi (7–8) · Ji (9–12)
+      </p>
+
+      <aside class="notes">
+        Speaker: Chuxi (0:30). Briefly mention everyone is present.
+      </aside>
+    </section>
+
+    <!-- Slide 3 -->
+    <section>
+      <h3>Motivation: Why Long-Horizon VLA Is Brittle</h3>
+      <div class="cols">
+        <div class="col">
+          <ul class="tight">
+            <li>Flat end-to-end VLA often <b>imitates trajectories</b> instead of solving stages.</li>
+            <li>In long horizons, small errors <b>accumulate</b> → later stages collapse.</li>
+            <li>No explicit “what subgoal am I doing now?” signal.</li>
+          </ul>
+        </div>
+
+        <div class="col">
+          <div class="svgwrap">
+            <svg viewBox="0 0 560 260" width="100%" height="260" role="img" aria-label="Error accumulation diagram">
+              <defs>
+                <style>
+                  .box{fill:#fff;stroke:#bbb;stroke-width:2;rx:14;ry:14}
+                  .arr{stroke:#666;stroke-width:2;marker-end:url(#m)}
+                  .t{font: 16px system-ui, -apple-system, Segoe UI, Roboto, sans-serif; fill:#111}
+                  .m{font: 14px system-ui, -apple-system, Segoe UI, Roboto, sans-serif; fill:#555}
+                  .bad{fill:#fff1f0;stroke:#f3c2bf}
+                </style>
+                <marker id="m" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+                  <path d="M0,0 L8,3 L0,6 Z" fill="#666"></path>
+                </marker>
+              </defs>
+
+              <rect class="box" x="20" y="30" width="160" height="70"></rect>
+              <text class="t" x="100" y="60" text-anchor="middle">Stage 1</text>
+              <text class="m" x="100" y="82" text-anchor="middle">small deviation</text>
+
+              <line class="arr" x1="180" y1="65" x2="240" y2="65"></line>
+
+              <rect class="box bad" x="240" y="30" width="160" height="70"></rect>
+              <text class="t" x="320" y="60" text-anchor="middle">Stage 2</text>
+              <text class="m" x="320" y="82" text-anchor="middle">compounded error</text>
+
+              <line class="arr" x1="400" y1="65" x2="460" y2="65"></line>
+
+              <rect class="box bad" x="460" y="30" width="80" height="70"></rect>
+              <text class="t" x="500" y="60" text-anchor="middle">Fail</text>
+
+              <rect class="box" x="20" y="150" width="520" height="80"></rect>
+              <text class="t" x="280" y="182" text-anchor="middle">Flat policy: single prompt → single trajectory fit</text>
+              <text class="m" x="280" y="206" text-anchor="middle">Hard to recover because “stage identity” is implicit</text>
+            </svg>
+          </div>
+          <div class="callout" style="margin-top:14px;">
+            <b>Hypothesis:</b> Conditioning the policy on an explicit subtask can reduce
+            trajectory overfitting and improve stability.
+          </div>
+        </div>
+      </div>
+
+      <aside class="notes">
+        Speaker: Chuxi (0:55). Emphasize accumulation + lack of explicit stage signal.
+      </aside>
+    </section>
+
+    <!-- Slide 4 -->
+    <section>
+      <h3>Packaged Story: A Controlled Study with an Oracle High-Level Planner</h3>
+
+      <div class="cols">
+        <div class="col">
+          <div class="card">
+            <p style="margin:0;"><b>Goal:</b> isolate the effect of hierarchy on long-horizon execution.</p>
+            <ul class="tight" style="margin-top:10px;">
+              <li>Use <b>oracle / rule-based</b> subtask decomposition.</li>
+              <li>Compare against flat end-to-end prompting.</li>
+              <li>Test: Does hierarchy help? When does it fail?</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="card">
+            <p style="margin:0;"><b>Two factors we analyze:</b></p>
+            <ul class="tight" style="margin-top:10px;">
+              <li><span class="pill accent">A</span> <b>Explicit subtask prompts</b> (split rubric)</li>
+              <li><span class="pill accent">B</span> <b>Subtask-specific finetuning</b> of π0 on (task, subtask)</li>
+            </ul>
+            <p class="small muted" style="margin-top:10px;">
+              We’re not claiming a perfect planner—just exposing the potential of hierarchical VLA.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <aside class="notes">
+        Speaker: Chuxi (0:55). Make clear: oracle planner for analysis; two-factor framing.
+      </aside>
+    </section>
+
+    <!-- Slide 5 -->
+    <section>
+      <h3>Two-Level Hierarchical VLA (Overview)</h3>
+
+      <div class="svgwrap">
+        <svg viewBox="0 0 980 250" width="100%" height="250" role="img" aria-label="Hierarchy diagram">
+          <defs>
+            <style>
+              .box{fill:#fff;stroke:#bbb;stroke-width:2;rx:14;ry:14}
+              .blue{fill:#eef4ff;stroke:#bcd3ff}
+              .green{fill:#eef7f1;stroke:#bde5c8}
+              .arr{stroke:#666;stroke-width:2;marker-end:url(#m)}
+              .t{font: 18px system-ui, -apple-system, Segoe UI, Roboto, sans-serif; fill:#111}
+              .m{font: 14px system-ui, -apple-system, Segoe UI, Roboto, sans-serif; fill:#555}
+            </style>
+            <marker id="m" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6 Z" fill="#666"></path>
+            </marker>
+          </defs>
+
+          <rect class="box blue" x="30" y="40" width="180" height="70"></rect>
+          <text class="t" x="120" y="70" text-anchor="middle">Task prompt</text>
+          <text class="m" x="120" y="92" text-anchor="middle">(RoboTwin)</text>
+
+          <line class="arr" x1="210" y1="75" x2="280" y2="75"></line>
+
+          <rect class="box blue" x="280" y="40" width="220" height="70"></rect>
+          <text class="t" x="390" y="70" text-anchor="middle">Oracle decomposition</text>
+          <text class="m" x="390" y="92" text-anchor="middle">subtask = text</text>
+
+          <line class="arr" x1="500" y1="75" x2="560" y2="75"></line>
+
+          <rect class="box green" x="560" y="30" width="190" height="90"></rect>
+          <text class="t" x="655" y="65" text-anchor="middle">π0 policy</text>
+          <text class="m" x="655" y="88" text-anchor="middle">conditioned on subtask</text>
+
+          <line class="arr" x1="750" y1="75" x2="820" y2="75"></line>
+
+          <rect class="box" x="820" y="40" width="130" height="70"></rect>
+          <text class="t" x="885" y="70" text-anchor="middle">Sim exec</text>
+          <text class="m" x="885" y="92" text-anchor="middle">(chunked)</text>
+
+          <line class="arr" x1="885" y1="110" x2="885" y2="165"></line>
+          <line class="arr" x1="885" y1="165" x2="560" y2="165"></line>
+          <text class="m" x="720" y="190" text-anchor="middle">next observation → repeat</text>
+        </svg>
+      </div>
+
+      <ul class="tight" style="margin-top:12px;">
+        <li><b>High level:</b> choose “what to do now” (oracle subtasks).</li>
+        <li><b>Low level:</b> π0 executes each subtask with stable, reusable primitives.</li>
+      </ul>
+
+      <aside class="notes">
+        Speaker: Chuxi (1:20). Walk diagram left-to-right; emphasize loop and chunked execution.
+      </aside>
+    </section>
+
+    <!-- Slide 6 -->
+    <section>
+      <h3>Subtask Prompting & Subtask Finetuning (What We Actually Change)</h3>
+
+      <div class="cols">
+        <div class="col card">
+          <p style="margin:0;"><b>Rubrics (inference prompting)</b></p>
+          <ul class="tight" style="margin-top:10px;">
+            <li><span class="pill">Baseline rubric</span> use RoboTwin full prompt end-to-end.</li>
+            <li><span class="pill accent">Split rubric</span> replace with <b>current subtask prompt</b> each stage.</li>
+          </ul>
+
+          <p class="small muted" style="margin-top:10px; margin-bottom:6px;"><b>Prompt (baseline):</b></p>
+          <pre class="tiny" style="margin:0; white-space:pre-wrap;">
+First, place red block on the far left, then green block in the middle, and finish with blue block on the right.</pre>
+          <p class="small muted" style="margin-top:10px; margin-bottom:6px;"><b>Prompt (split):</b></p>
+          <pre class="tiny" style="margin:0; white-space:pre-wrap;">
+Move the red block to the left position</pre>
+        </div>
+
+        <div class="col card">
+          <p style="margin:0;"><b>Models (training)</b></p>
+          <ul class="tight" style="margin-top:10px;">
+            <li><span class="pill">pi0-base</span> original π0 (no subtask finetuning).</li>
+            <li><span class="pill accent">pi0-split</span> π0 <b>finetuned</b> on data with (task, subtask) prompts.</li>
+          </ul>
+
+          <div class="callout small" style="margin-top:12px;">
+            Key idea: <b>single shared model</b> learns many subtasks (not one model per subtask).
+          </div>
+        </div>
+      </div>
+
+      <aside class="notes">
+        Speaker: Chuxi (1:05). Clearly define 2 rubrics and 2 models; this creates the 2x2 results later.
+      </aside>
+    </section>
+
+    <!-- Slide 7 -->
+    <section>
+      <h3>Related Work (Positioning)</h3>
+
+      <div class="cols">
+        <div class="col card">
+          <p style="margin:0;"><b>Flat VLA (end-to-end)</b></p>
+          <ul class="tight" style="margin-top:10px;">
+            <li>RT-1, PaLM-E, <b>π0</b></li>
+            <li>Widely used, but long-horizon brittleness</li>
+          </ul>
+        </div>
+
+        <div class="col card">
+          <p style="margin:0;"><b>Hierarchical VLA</b></p>
+          <ul class="tight" style="margin-top:10px;">
+            <li>Hierarchical prompting (e.g., HiRobot)</li>
+            <li>Internal hierarchical modeling (e.g., π0.5, Wall-OSS)</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout" style="margin-top:14px;">
+        <b>Our niche:</b> a <b>controlled empirical analysis</b> of hierarchy using an <b>oracle high-level planner</b>,
+        and measuring the effect of <b>subtask prompting</b> and <b>subtask finetuning</b>.
+      </div>
+
+      <aside class="notes">
+        Speaker: Zixi (1:00). Keep it crisp: flat vs hierarchical; our controlled study angle.
+      </aside>
+    </section>
+
+    <!-- Slide 8 -->
+    <section>
+      <h3>Benchmark: RoboTwin Long-Horizon Tasks</h3>
+
+      <div class="cols">
+        <div class="col">
+          <ul class="tight">
+            <li>Simulator: <b>RoboTwin</b></li>
+            <li>Tasks: 2 long-horizon tasks</li>
+            <li>Evaluation: <b>500 independent episodes</b> per task</li>
+            <li>Metric: <b>success rate</b> within time limit</li>
+          </ul>
+
+          <div class="card" style="margin-top:12px;">
+            <p style="margin:0;"><b>Task 1:</b> blocks ranking rgb</p>
+            <p class="small muted" style="margin:6px 0 0 0;">Move multiple blocks to multiple targets.</p>
+            <p style="margin-top:10px; margin-bottom:0;"><b>Task 2:</b> put object cabinet</p>
+            <p class="small muted" style="margin:6px 0 0 0;">Grasp + place into cabinet.</p>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="imggrid">
+            <div class="card">
+              <img src="t1_before.png" alt="Task1 before" style="width:100%; height:auto; border-radius:10px;">
+              <div class="imgcap">Task 1: before</div>
+            </div>
+            <div class="card">
+              <img src="t1_after.png" alt="Task1 after" style="width:100%; height:auto; border-radius:10px;">
+              <div class="imgcap">Task 1: after</div>
+            </div>
+            <div class="card">
+              <img src="t2_before.png" alt="Task2 before" style="width:100%; height:auto; border-radius:10px;">
+              <div class="imgcap">Task 2: before</div>
+            </div>
+            <div class="card">
+              <img src="t2_after.png" alt="Task2 after" style="width:100%; height:auto; border-radius:10px;">
+              <div class="imgcap">Task 2: after</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="notes">
+        Speaker: Zixi (1:30). Explain tasks visually; emphasize 500 episodes and metric.
+      </aside>
+    </section>
+
+    <!-- Slide 9 -->
+    <section>
+      <h3>Training & Evaluation Protocol (Important Implementation Detail)</h3>
+
+      <div class="cols">
+        <div class="col card">
+          <p style="margin:0;"><b>π0 training</b></p>
+          <ul class="tight" style="margin-top:10px;">
+            <li>Imitation learning with <b>sliding window</b> (sequence chunks).</li>
+            <li>Policy predicts a chunk of action tokens each step.</li>
+          </ul>
+        </div>
+
+        <div class="col card">
+          <p style="margin:0;"><b>RoboTwin evaluation</b></p>
+          <ul class="tight" style="margin-top:10px;">
+            <li>Loop: <b>predict 50 steps (~1s)</b> → simulator executes → next observation.</li>
+            <li>This is <b>synchronous</b>; differs from async real-world</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="svgwrap" style="margin-top:12px;">
+        <svg viewBox="0 0 980 140" width="100%" height="140" role="img" aria-label="Chunked control timeline">
+          <defs>
+            <style>
+              .t{font: 16px system-ui, -apple-system, Segoe UI, Roboto, sans-serif; fill:#111}
+              .m{font: 14px system-ui, -apple-system, Segoe UI, Roboto, sans-serif; fill:#555}
+              .chunk{fill:#eef4ff;stroke:#bcd3ff;stroke-width:2;rx:12;ry:12}
+              .exec{fill:#fff;stroke:#bbb;stroke-width:2;rx:12;ry:12}
+              .arr{stroke:#666;stroke-width:2;marker-end:url(#m)}
+            </style>
+            <marker id="m" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6 Z" fill="#666"></path>
+            </marker>
+          </defs>
+
+          <text class="t" x="30" y="28">t</text>
+          <rect class="chunk" x="60" y="45" width="260" height="60"></rect>
+          <text class="t" x="190" y="78" text-anchor="middle">π0 predicts 50 actions</text>
+
+          <line class="arr" x1="320" y1="75" x2="390" y2="75"></line>
+
+          <rect class="exec" x="390" y="45" width="260" height="60"></rect>
+          <text class="t" x="520" y="78" text-anchor="middle">Simulator executes</text>
+
+          <line class="arr" x1="650" y1="75" x2="720" y2="75"></line>
+
+          <rect class="chunk" x="720" y="45" width="230" height="60"></rect>
+          <text class="t" x="835" y="78" text-anchor="middle">Next 50 actions...</text>
+
+          <text class="m" x="60" y="128">Why it matters: stability/error compounding depends on chunking + feedback frequency.</text>
+        </svg>
+      </div>
+
+      <aside class="notes">
+        Speaker: Ji (1:15). Stress sync chunked control (50 steps ~1s) and why it affects stability.
+      </aside>
+    </section>
+
+    <!-- Slide 10 -->
+    <section>
+      <h3>Main Results</h3>
+
+      <div class="cols">
+        <div class="col">
+          <h4 style="margin-bottom:8px;">Task 1: blocks ranking rgb</h4>
+          <table>
+            <tr>
+              <th></th>
+              <th>Baseline rubric<br><span class="tiny muted">(full prompt)</span></th>
+              <th>Split rubric<br><span class="tiny muted">(oracle subtasks)</span></th>
+            </tr>
+            <tr>
+              <th>pi0-base<br><span class="tiny muted">(no finetune)</span></th>
+              <td>45.4%</td>
+              <td>47.6%</td>
+            </tr>
+            <tr>
+              <th>pi0-split<br><span class="tiny muted">(subtask finetune)</span></th>
+              <td>35.6%</td>
+              <td class="best">53.8% <span class="good">(+8.4)</span></td>
+            </tr>
+          </table>
+          <p class="small" style="margin-top:10px;">
+            Best = <b>split rubric</b> + <b>subtask finetuning</b> → improved long-horizon stability.
+          </p>
+        </div>
+
+        <div class="col">
+          <h4 style="margin-bottom:8px;">Task 2: put object cabinet</h4>
+          <table>
+            <tr>
+              <th></th>
+              <th>Baseline rubric</th>
+              <th>Split rubric</th>
+            </tr>
+            <tr>
+              <th>pi0-base</th>
+              <td>31.2%</td>
+              <td>31.0%</td>
+            </tr>
+            <tr>
+              <th>pi0-split</th>
+              <td>28.0%</td>
+              <td>27.8%</td>
+            </tr>
+          </table>
+          <div class="callout small" style="margin-top:10px;">
+            Why no gain? likely <b>data coverage</b> + lack of explicit <b>error recovery</b> mechanisms.
+          </div>
+        </div>
+      </div>
+
+      <aside class="notes">
+        Speaker: Ji (2:15). Tell the story: Task1 improves (oracle subtasks expose hierarchy advantage),
+        Task2 doesn't (needs recovery / different data). Keep it sharp.
+      </aside>
+    </section>
+
+    <!-- Slide 11 -->
+    <section>
+      <h3>Discussion: What We Learn from the Oracle Planner</h3>
+
+      <div class="card">
+        <ul class="tight">
+          <li><b>Hierarchy helps when subtasks are reusable</b>: Task 1 shows reduced trajectory coupling and better robustness.</li>
+          <li><b>Alignment matters</b>: finetuning without matching inference prompting can hurt (Task 1, pi0-split under baseline rubric).</li>
+          <li><b>Some tasks need recovery</b>: Task 2 suggests decomposition alone is insufficient without corrective behaviors.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Slide 12 -->
+    <section>
+      <h3>Limitations & Next Steps</h3>
+      <div class="cols">
+        <div class="col card">
+          <p style="margin:0;"><b>Limitations</b></p>
+          <ul class="tight" style="margin-top:10px;">
+            <li>Manual/oracle decomposition</li>
+            <li>Only 2 tasks evaluated (time constraint)</li>
+          </ul>
+        </div>
+        <div class="col card">
+          <p style="margin:0;"><b>Next</b></p>
+          <ul class="tight" style="margin-top:10px;">
+            <li>Learned decomposition (VLM planner)</li>
+            <li>Explicit failure detection + recovery policies</li>
+            <li>Broader task suite, more ablations</li>
+          </ul>
+        </div>
+      </div>
+
+      <aside class="notes">
+        Speaker: Ji (1:00). 3 bullets takeaway + 3 bullets next steps. Don’t overrun.
+      </aside>
+    </section>
+
+    <!-- Slide 13 -->
+    <section>
+      <h2>Q & A</h2>
+      <p class="muted">Thank you.</p>
+      <aside class="notes">
+        All.
+      </aside>
+    </section>
+
+    <!-- Optional backup slides (uncomment if you want)
+    <section>
+      <h3>Backup: Example Subtasks (Task 1)</h3>
+      <ul>
+        <li>Find red block → grasp → place at target A</li>
+        <li>Find green block → grasp → place at target B</li>
+        <li>Find blue block → grasp → place at target C</li>
+      </ul>
+    </section>
+    -->
+
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5/plugin/notes/notes.js"></script>
+<script>
+  Reveal.initialize({
+    hash: true,
+    slideNumber: true,
+    width: 1280,
+    height: 720,
+    margin: 0.07,
+    plugins: [ RevealNotes ]
+  });
+</script>
+</body>
+</html>

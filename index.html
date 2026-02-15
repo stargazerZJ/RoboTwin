@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MLHMI 2026 Course Project — Hierarchical VLA in RoboTwin</title>
+  <meta name="description" content="CV course project (ACM Class): Enhancing long-horizon robot manipulation with hierarchical task decomposition and subtask finetuning in RoboTwin." />
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #0f1a2f;
+      --text: #e7eefc;
+      --muted: #a9b6d3;
+      --link: #8ab4ff;
+      --border: rgba(231, 238, 252, 0.14);
+      --shadow: rgba(0,0,0,0.24);
+      --accent: #9ef0d1;
+      --bad: #ff9b9b;
+      --good: #9ef0d1;
+      --warn: #ffd08a;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      --radius: 14px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      background: radial-gradient(1200px 650px at 15% 10%, rgba(138,180,255,0.16), transparent 50%),
+                  radial-gradient(900px 600px at 85% 30%, rgba(158,240,209,0.10), transparent 55%),
+                  var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+    }
+
+    a { color: var(--link); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .wrap { max-width: 1060px; margin: 0 auto; padding: 28px 18px 72px; }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 16px;
+      align-items: start;
+      padding: 18px;
+      background: linear-gradient(180deg, rgba(15,26,47,0.9), rgba(15,26,47,0.6));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 16px 40px var(--shadow);
+    }
+    header > div, header > nav { min-width: 0; }
+
+    header h1 {
+      margin: 0 0 8px;
+      font-size: 1.55rem;
+      letter-spacing: 0.2px;
+    }
+    header .subtitle { margin: 0; color: var(--muted); }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      background: rgba(231,238,252,0.06);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 0.88rem;
+      color: var(--muted);
+    }
+    .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--accent); display: inline-block; }
+
+    nav {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .nav-btn {
+      display: inline-flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 3px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(11,18,32,0.35);
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 700;
+      box-shadow: 0 10px 24px rgba(0,0,0,0.18);
+      min-height: 56px;
+    }
+    .nav-btn span {
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 0.92rem;
+      line-height: 1.2;
+    }
+    .nav-btn:hover { background: rgba(11,18,32,0.55); text-decoration: none; }
+
+    main { margin-top: 16px; display: grid; gap: 16px; }
+
+    @media (max-width: 980px) {
+      header { grid-template-columns: 1fr; }
+      nav { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+      .nav-btn { min-height: 54px; }
+    }
+
+    section {
+      padding: 18px;
+      background: rgba(15,26,47,0.66);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 16px 40px var(--shadow);
+    }
+
+    section h2 {
+      margin: 0 0 12px;
+      font-size: 1.1rem;
+      letter-spacing: 0.2px;
+    }
+
+    .muted { color: var(--muted); }
+
+    .kvs { display: grid; gap: 10px; }
+    .kv {
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      gap: 10px;
+      align-items: start;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(11,18,32,0.22);
+    }
+    .kv .k { color: var(--muted); font-weight: 600; }
+    .kv .v { color: var(--text); }
+    .kv .v code { font-family: var(--mono); font-size: 0.92rem; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    .card {
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(11,18,32,0.22);
+    }
+
+    .card h3 { margin: 0 0 6px; font-size: 0.98rem; }
+    .card p { margin: 0; color: var(--muted); }
+
+    .table-wrap { overflow: auto; border-radius: 12px; border: 1px solid var(--border); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: rgba(11,18,32,0.22);
+    }
+
+    th, td {
+      padding: 10px 10px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th { color: var(--muted); font-weight: 700; }
+    tr:last-child td { border-bottom: none; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 5px 10px;
+      border: 1px solid var(--border);
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      background: rgba(231,238,252,0.06);
+      color: var(--text);
+    }
+
+    .pill.good { border-color: rgba(158,240,209,0.35); }
+    .pill.warn { border-color: rgba(255,208,138,0.35); }
+
+    .img-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    @media (max-width: 920px) { .img-grid { grid-template-columns: 1fr; } }
+
+    figure { margin: 0; }
+    figcaption { margin-top: 6px; color: var(--muted); font-size: 0.92rem; }
+
+    img {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(11,18,32,0.24);
+      box-shadow: 0 10px 28px rgba(0,0,0,0.18);
+    }
+
+    footer {
+      margin-top: 18px;
+      padding: 18px;
+      color: var(--muted);
+      font-size: 0.95rem;
+      text-align: center;
+    }
+
+    .note {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px dashed rgba(231,238,252,0.22);
+      background: rgba(11,18,32,0.18);
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Enhancing Long-Horizon Robot Manipulation with Hierarchical Task Decomposition and Subtask Finetuning</h1>
+        <p class="subtitle">ACM Class (CV course) project — by <b>Yonglu Li</b> and <b>Cewu Lu</b> — team: Ji Zeng, Chuxi Wu, Zixi Chen</p>
+        <div class="badge-row">
+          <span class="badge"><span class="dot"></span> RoboTwin simulation benchmark</span>
+          <span class="badge"><span class="dot"></span> Hierarchical prompting (oracle subtasks)</span>
+          <span class="badge"><span class="dot"></span> Subtask-aligned finetuning</span>
+        </div>
+        <div class="note">
+          This page is a lightweight project homepage for course submission. It includes links to the paper PDF, slides, code branches, and acceptance notifications.
+        </div>
+      </div>
+
+      <nav aria-label="Quick links">
+        <a class="nav-btn" href="#materials">Materials <span>PDF / Slides / Acceptance</span></a>
+        <a class="nav-btn" href="#code">Code <span>GitHub & branches</span></a>
+        <a class="nav-btn" href="#results">Results <span>success rates</span></a>
+        <a class="nav-btn" href="#method">Method <span>two-level hierarchy</span></a>
+      </nav>
+    </header>
+
+    <main>
+      <section id="materials">
+        <h2>Submission Materials</h2>
+        <div class="kvs">
+          <div class="kv">
+            <div class="k">Paper (PDF)</div>
+            <div class="v">
+              <a href="./materials/MLHMI_2026_Paper.pdf" download>MLHMI_2026_Paper.pdf</a>
+              <div class="muted">Title: <i>Enhancing Long-Horizon Robot Manipulation with Hierarchical Task Decomposition and Subtask Finetuning</i></div>
+            </div>
+          </div>
+          <div class="kv">
+            <div class="k">Slides</div>
+            <div class="v">
+              <a href="./materials/slides/slides.html">slides.html</a>
+              <span class="muted">(HTML, course final presentation)</span>
+            </div>
+          </div>
+          <div class="kv">
+            <div class="k">Acceptance</div>
+            <div class="v">
+              <a href="./materials/acceptance/BH5094%20notification.pdf" download>BH5094 notification.pdf</a>
+              <span class="muted">&middot;</span>
+              <a href="./materials/acceptance/MLHMI%202026%20review%20form-BH5094.pdf" download>MLHMI 2026 review form-BH5094.pdf</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+        <section id="method">
+          <h2>Method (What we changed)</h2>
+          <div class="cards">
+            <div class="card">
+              <h3>Motivation</h3>
+              <p>End-to-end Visual-Language-Action (VLA) policies often fail in long-horizon tasks because early errors propagate and destabilize later stages.</p>
+            </div>
+            <div class="card">
+              <h3>Two-level hierarchy (minimal)</h3>
+              <p>A high-level oracle outputs a <b>subtask prompt</b>; the low-level VLA policy executes actions conditioned on that prompt.</p>
+            </div>
+            <div class="card">
+              <h3>Subtask prompting</h3>
+              <p>We evaluate both the baseline single prompt and an oracle <b>split rubric</b> that explicitly provides the current subtask instruction.</p>
+            </div>
+            <div class="card">
+              <h3>Subtask finetuning</h3>
+              <p>We finetune the same low-level policy on data labeled with subtask prompts to strengthen subtask-aligned behaviors.</p>
+            </div>
+          </div>
+
+          <div class="img-grid" aria-label="Task visuals">
+            <figure>
+              <img src="./materials/slides/t1_before.png" alt="Task 1: before" loading="lazy" />
+              <figcaption>Task 1 (blocks ranking rgb): before</figcaption>
+            </figure>
+            <figure>
+              <img src="./materials/slides/t1_after.png" alt="Task 1: after" loading="lazy" />
+              <figcaption>Task 1 (blocks ranking rgb): after</figcaption>
+            </figure>
+            <figure>
+              <img src="./materials/slides/t2_before.png" alt="Task 2: before" loading="lazy" />
+              <figcaption>Task 2 (put object cabinet): before</figcaption>
+            </figure>
+            <figure>
+              <img src="./materials/slides/t2_after.png" alt="Task 2: after" loading="lazy" />
+              <figcaption>Task 2 (put object cabinet): after</figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section id="results">
+          <h2>Results (500 episodes each)</h2>
+          <p class="muted">Success rate (%) under different rubric settings. See the paper for full details.</p>
+
+          <div class="table-wrap" role="region" aria-label="Results tables" tabindex="0">
+            <table>
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Model</th>
+                  <th>Rubric: baseline</th>
+                  <th>Rubric: split</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><b>blocks ranking rgb</b></td>
+                  <td><span class="pill">π0-base</span></td>
+                  <td>45.4%</td>
+                  <td>47.6%</td>
+                  <td class="muted">Small change (limited prompt sensitivity).</td>
+                </tr>
+                <tr>
+                  <td><b>blocks ranking rgb</b></td>
+                  <td><span class="pill good">π0-split</span></td>
+                  <td>35.6%</td>
+                  <td><b>53.8%</b></td>
+                  <td class="muted">Oracle subtask prompting improves long-horizon stability.</td>
+                </tr>
+                <tr>
+                  <td><b>blocks ranking rgb</b></td>
+                  <td><span class="pill warn">π0.5-base</span></td>
+                  <td>68.3%</td>
+                  <td>74.6%</td>
+                  <td class="muted">Stronger language dependence benefits more from split rubric.</td>
+                </tr>
+                <tr>
+                  <td><b>put object cabinet</b></td>
+                  <td><span class="pill">π0-base</span></td>
+                  <td>31.2%</td>
+                  <td>31.0%</td>
+                  <td class="muted">No gain from decomposition (tightly coupled sequence).</td>
+                </tr>
+                <tr>
+                  <td><b>put object cabinet</b></td>
+                  <td><span class="pill">π0-split</span></td>
+                  <td>28.0%</td>
+                  <td>27.8%</td>
+                  <td class="muted">Suggests need for recovery / different data coverage.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="note">
+            Key takeaway: hierarchical conditioning can improve success rate for tasks with clearer temporal structure (Task 1), but is not universally helpful (Task 2).
+          </div>
+        </section>
+
+      <section id="code">
+        <h2>Code (GitHub + branches)</h2>
+        <div class="kvs">
+          <div class="kv">
+            <div class="k">Repository</div>
+            <div class="v">
+              <a href="https://robotwin-platform.github.io/" target="_blank" rel="noreferrer">RoboTwin Platform webpage</a>
+              <div class="muted">This project is implemented as a fork and modifications to RoboTwin.</div>
+            </div>
+          </div>
+          <div class="kv">
+            <div class="k">Fork</div>
+            <div class="v">
+              <a href="https://github.com/stargazerZJ/RoboTwin" target="_blank" rel="noreferrer">github.com/stargazerZJ/RoboTwin</a>
+              <div class="muted">Use this link for the course submission “github link”.</div>
+            </div>
+          </div>
+          <div class="kv">
+            <div class="k">Branches</div>
+            <div class="v">
+              <ul style="margin: 0; padding-left: 18px;">
+                <li><span class="pill">custom</span> — code changes for the project</li>
+                <li><span class="pill">custom_pi05</span> — additional changes / experiments on π0.5</li>
+                <li><span class="pill">gh-pages</span> — this project homepage for GitHub Pages</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer>
+        Built for the ACM Class CV course submission. Content derived from the prepared paper and presentation materials.
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
